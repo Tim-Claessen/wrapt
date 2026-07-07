@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; background:#08080a; }
+  a { color:#d0a24e; text-decoration:none; }
+  a:hover { color:#e6bd6c; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  @keyframes riseIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes floaty { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+</style>
+</helmet>
+
+<div style="--gold:{{accent}};--up:{{up}};--down:{{down}};min-height:100vh;background:radial-gradient(120% 80% at 50% -10%,#131117 0%,#08080a 60%);padding:64px 64px 120px;font-family:'Schibsted Grotesk',system-ui,sans-serif;box-sizing:border-box">
+
+  <!-- Board header -->
+  <div style="max-width:1200px;margin:0 auto 56px">
+    <div style="display:flex;align-items:flex-end;gap:16px">
+      <div style="font-size:40px;font-weight:700;letter-spacing:-0.03em;color:#f2efe8">Wrapt</div>
+      <div style="font-family:'Space Mono',monospace;font-size:12px;color:#625d54;padding-bottom:9px">DESIGN MOCKUPS · v1 · mobile-first</div>
+    </div>
+    <div style="margin-top:10px;color:#9a948a;font-size:15px;max-width:560px;line-height:1.5">Your year in music, all year long — a two-person household's listening dashboard. Dark-first, artwork-led, one gold accent.</div>
+    <div style="display:flex;gap:20px;margin-top:18px;font-family:'Space Mono',monospace;font-size:11px;color:#8a847a">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:var(--gold)"></span>accent</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:var(--up)"></span>climbing</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:3px;background:var(--down)"></span>slipping</span>
+    </div>
+  </div>
+
+  <!-- Gallery -->
+  <div style="display:flex;flex-wrap:wrap;gap:64px;align-items:flex-start;justify-content:center">
+
+    <!-- 01 LOGIN -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">01 · LOGIN</div>
+      <div data-screen-label="Login" style="width:380px;height:760px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 34px">
+          <div style="font-size:56px;font-weight:700;letter-spacing:-0.04em;color:#f2efe8;line-height:0.9">Wrapt</div>
+          <div style="margin-top:16px;font-size:17px;color:#9a948a;line-height:1.45;max-width:280px">{{ c.loginTag }}</div>
+          <div style="margin-top:44px;display:flex;flex-direction:column;gap:12px">
+            <label style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#625d54">EMAIL</label>
+            <input placeholder="you@example.com" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:13px;padding:15px 16px;font-size:15px;font-family:'Schibsted Grotesk',sans-serif;color:#f2efe8;outline:none">
+            <button style="margin-top:6px;background:var(--gold);border:0;border-radius:13px;padding:16px;font-size:15px;font-weight:600;color:#12100b;font-family:'Schibsted Grotesk',sans-serif;cursor:pointer">Send magic link</button>
+            <div style="margin-top:6px;font-size:12.5px;color:#625d54;text-align:center">No passwords. We'll email you a link.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 02 CONNECT -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">02 · CONNECT SPOTIFY</div>
+      <div data-screen-label="Connect" style="width:380px;height:760px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 34px">
+          <div style="position:relative;width:150px;height:120px;margin-bottom:38px">
+            <div style="position:absolute;left:20px;top:14px;width:88px;height:88px;border-radius:16px;background:linear-gradient(140deg,#8f7fc0,#2e2850);transform:rotate(-9deg)"></div>
+            <div style="position:absolute;left:44px;top:6px;width:88px;height:88px;border-radius:16px;background:linear-gradient(140deg,#4aa896,#173b3a);transform:rotate(7deg)"></div>
+            <div style="position:absolute;left:32px;top:20px;width:88px;height:88px;border-radius:16px;background:linear-gradient(140deg,#e08a4a,#7a2f2f);animation:floaty 5s ease-in-out infinite"></div>
+          </div>
+          <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:#f2efe8">Connect your Spotify</div>
+          <div style="margin-top:12px;font-size:15px;color:#9a948a;line-height:1.5;max-width:290px">{{ c.connectSub }}</div>
+          <button style="margin-top:32px;width:100%;background:var(--gold);border:0;border-radius:14px;padding:17px;font-size:16px;font-weight:600;color:#12100b;font-family:'Schibsted Grotesk',sans-serif;cursor:pointer">Connect Spotify</button>
+          <div style="margin-top:20px;display:flex;gap:9px;align-items:flex-start;text-align:left;color:#625d54;font-size:12.5px;line-height:1.5;max-width:300px"><span style="color:var(--gold);font-size:13px">✦</span><span>{{ c.privacy }}</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 03 DASHBOARD -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">03 · DASHBOARD <span style="color:#4a453d">· hero</span></div>
+      <div data-screen-label="Dashboard" style="width:380px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="padding:22px 20px 8px">
+          <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#625d54">SUNDAY · JUL 6</div>
+          <div style="margin-top:6px;font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#f2efe8;line-height:1.2">{{ c.greeting }}</div>
+        </div>
+
+        <!-- Recently played -->
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:18px 20px 6px">
+          <div style="font-size:16px;font-weight:600;color:#f2efe8">Recently played</div>
+        </div>
+        <div style="padding:0 20px">
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0">
+            <div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(140deg,#e08a4a,#7a2f2f);flex:none"></div>
+            <div style="flex:1;min-width:0"><div style="font-size:14px;color:#f2efe8">Nights</div><div style="font-size:12.5px;color:#9a948a">Frank Ocean</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">2m</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0">
+            <div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(140deg,#d6a94e,#5c3f16);flex:none"></div>
+            <div style="flex:1;min-width:0"><div style="font-size:14px;color:#f2efe8">Redbone</div><div style="font-size:12.5px;color:#9a948a">Childish Gambino</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">18m</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0">
+            <div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(140deg,#5a7fb0,#1b2540);flex:none"></div>
+            <div style="flex:1;min-width:0"><div style="font-size:14px;color:#f2efe8">Alright</div><div style="font-size:12.5px;color:#9a948a">Kendrick Lamar</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">44m</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:9px 0">
+            <div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(140deg,#8f7fc0,#2e2850);flex:none"></div>
+            <div style="flex:1;min-width:0"><div style="font-size:14px;color:#f2efe8">Motion Sickness</div><div style="font-size:12.5px;color:#9a948a">Phoebe Bridgers</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">1h</div>
+          </div>
+        </div>
+
+        <!-- Range toggle -->
+        <div style="display:flex;gap:4px;margin:22px 20px 0;padding:4px;background:rgba(255,255,255,0.05);border-radius:13px">
+          <sc-for list="{{ rangePills }}" as="pill" hint-placeholder-count="3">
+            <button onClick="{{ pill.onClick }}" style="flex:1;border:0;padding:9px 4px;border-radius:10px;cursor:pointer;font-family:'Space Mono',monospace;font-size:11px;letter-spacing:0.3px;transition:all .18s ease;background:{{ pill.bg }};color:{{ pill.color }};font-weight:{{ pill.weight }}">{{ pill.label }}</button>
+          </sc-for>
+        </div>
+
+        <!-- Top artists -->
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:24px 20px 12px">
+          <div style="font-size:16px;font-weight:600;color:#f2efe8">Top artists</div>
+          <div style="font-family:'Space Mono',monospace;font-size:10px;color:#625d54">{{ rangeLabel }}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0 20px">
+          <sc-for list="{{ artists }}" as="a" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:9px">
+              <div style="position:relative;width:100%">
+                <div style="aspect-ratio:1;border-radius:50%;background:{{ a.art }}"></div>
+                <div style="position:absolute;top:6px;left:6px;min-width:26px;height:26px;padding:0 6px;display:flex;align-items:center;justify-content:center;background:rgba(10,9,8,0.72);backdrop-filter:blur(6px);border-radius:9px;font-family:'Space Mono',monospace;font-size:14px;font-weight:700;color:var(--gold)">{{ a.rank }}</div>
+              </div>
+              <div style="text-align:center"><div style="font-size:14px;font-weight:500;color:#f2efe8">{{ a.name }}</div><div style="font-family:'Space Mono',monospace;font-size:10.5px;color:#625d54;margin-top:2px">{{ a.plays }}</div></div>
+            </div>
+          </sc-for>
+        </div>
+
+        <!-- Top tracks -->
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:26px 20px 12px">
+          <div style="font-size:16px;font-weight:600;color:#f2efe8">Top tracks</div>
+          <div style="font-family:'Space Mono',monospace;font-size:10px;color:#625d54">{{ rangeLabel }}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:0 20px">
+          <sc-for list="{{ tracks }}" as="t" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column;gap:9px">
+              <div style="position:relative">
+                <div style="aspect-ratio:1;border-radius:14px;background:{{ t.art }}"></div>
+                <div style="position:absolute;top:6px;left:6px;min-width:26px;height:26px;padding:0 6px;display:flex;align-items:center;justify-content:center;background:rgba(10,9,8,0.72);backdrop-filter:blur(6px);border-radius:9px;font-family:'Space Mono',monospace;font-size:14px;font-weight:700;color:var(--gold)">{{ t.rank }}</div>
+              </div>
+              <div><div style="font-size:14px;font-weight:500;color:#f2efe8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.title }}</div><div style="font-size:12px;color:#9a948a">{{ t.artist }}</div></div>
+            </div>
+          </sc-for>
+        </div>
+
+        <!-- Playlists -->
+        <div style="margin:26px 20px 12px;font-size:16px;font-weight:600;color:#f2efe8">My playlists</div>
+        <div style="padding:0 20px 8px">
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 0">
+            <div style="width:42px;height:42px;border-radius:9px;background:linear-gradient(140deg,#e08a4a,#7a2f2f);flex:none"></div>
+            <div style="flex:1"><div style="font-size:14px;color:#f2efe8">Sunday Kitchen</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">84</div>
+            <div style="color:#4a453d;font-size:18px">›</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,0.06)">
+            <div style="width:42px;height:42px;border-radius:9px;background:linear-gradient(140deg,#4aa896,#173b3a);flex:none"></div>
+            <div style="flex:1"><div style="font-size:14px;color:#f2efe8">Deep Focus</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">120</div>
+            <div style="color:#4a453d;font-size:18px">›</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,0.06)">
+            <div style="width:42px;height:42px;border-radius:9px;background:linear-gradient(140deg,#5a7fb0,#1b2540);flex:none"></div>
+            <div style="flex:1"><div style="font-size:14px;color:#f2efe8">Late Drives</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">57</div>
+            <div style="color:#4a453d;font-size:18px">›</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,0.06)">
+            <div style="width:42px;height:42px;border-radius:9px;background:linear-gradient(140deg,#d07a8a,#4a2030);flex:none"></div>
+            <div style="flex:1"><div style="font-size:14px;color:#f2efe8">Two of Us</div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">42</div>
+            <div style="color:#4a453d;font-size:18px">›</div>
+          </div>
+        </div>
+
+        <!-- Bottom nav -->
+        <div style="display:flex;justify-content:space-around;align-items:center;padding:14px 0 22px;margin-top:8px;border-top:1px solid rgba(255,255,255,0.07);background:rgba(6,6,8,0.5)">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:15px;color:var(--gold)">⌂</span><span style="font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:0.5px;color:var(--gold)">HOME</span></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:13px;color:#625d54">▲</span><span style="font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:0.5px;color:#625d54">TRENDS</span></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:14px;color:#625d54">○</span><span style="font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:0.5px;color:#625d54">YOU</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 04 TRENDS -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">04 · TRENDS <span style="color:#4a453d">· weekly countdown</span></div>
+      <div data-screen-label="Trends" style="width:380px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="padding:22px 20px 6px">
+          <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#625d54">WEEK OF JUN 30 – JUL 6</div>
+          <div style="margin-top:6px;font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#f2efe8">The weekly countdown</div>
+          <div style="margin-top:4px;font-size:14px;color:#9a948a">{{ c.trendsSub }}</div>
+        </div>
+
+        <!-- New entries -->
+        <div style="display:flex;align-items:center;gap:8px;margin:22px 20px 8px"><span style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:var(--gold)">NEW ENTRIES</span><span style="font-family:'Space Mono',monospace;font-size:11px;color:#4a453d">2</span></div>
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 20px;animation:riseIn .5s ease both;animation-delay:.02s">
+          <div style="width:40px;font-family:'Space Mono',monospace;font-size:30px;font-weight:700;color:#f2efe8;text-align:center;line-height:1">4</div>
+          <div style="width:50px;height:50px;border-radius:11px;background:linear-gradient(140deg,#7faa6a,#243a1c);flex:none"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:14.5px;color:#f2efe8">Not Strong Enough</div><div style="font-size:12px;color:#9a948a">boygenius</div></div>
+          <div style="font-family:'Space Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.5px;color:#12100b;background:var(--gold);padding:4px 8px;border-radius:7px">NEW</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 20px;animation:riseIn .5s ease both;animation-delay:.07s">
+          <div style="width:40px;font-family:'Space Mono',monospace;font-size:30px;font-weight:700;color:#f2efe8;text-align:center;line-height:1">9</div>
+          <div style="width:50px;height:50px;border-radius:11px;background:linear-gradient(140deg,#6a6fc0,#22224a);flex:none"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:14.5px;color:#f2efe8">EARFQUAKE</div><div style="font-size:12px;color:#9a948a">Tyler, The Creator</div></div>
+          <div style="font-family:'Space Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.5px;color:#12100b;background:var(--gold);padding:4px 8px;border-radius:7px">NEW</div>
+        </div>
+
+        <!-- Climbing -->
+        <div style="display:flex;align-items:center;gap:8px;margin:20px 20px 8px"><span style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:var(--up)">CLIMBING ▲</span><span style="font-family:'Space Mono',monospace;font-size:11px;color:#4a453d">3</span></div>
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 20px;animation:riseIn .5s ease both;animation-delay:.12s">
+          <div style="width:40px;font-family:'Space Mono',monospace;font-size:30px;font-weight:700;color:#f2efe8;text-align:center;line-height:1">1</div>
+          <div style="width:50px;height:50px;border-radius:11px;background:linear-gradient(140deg,#e08a4a,#7a2f2f);flex:none"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:14.5px;color:#f2efe8">Nights</div><div style="font-family:'Space Mono',monospace;font-size:10.5px;color:#625d54">last week #3</div></div>
+          <div style="display:flex;align-items:center;gap:4px;font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:var(--up)"><span>▲</span>2</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 20px;animation:riseIn .5s ease both;animation-delay:.17s">
+          <div style="width:40px;font-family:'Space Mono',monospace;font-size:30px;font-weight:700;color:#f2efe8;text-align:center;line-height:1">3</div>
+          <div style="width:50px;height:50px;border-radius:11px;background:linear-gradient(140deg,#4aa896,#173b3a);flex:none"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:14.5px;color:#f2efe8">Kill Bill</div><div style="font-family:'Space Mono',monospace;font-size:10.5px;color:#625d54">last week #8</div></div>
+          <div style="display:flex;align-items:center;gap:4px;font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:var(--up)"><span>▲</span>5</div>
+        </div>
+
+        <!-- Slipping -->
+        <div style="display:flex;align-items:center;gap:8px;margin:20px 20px 8px"><span style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:var(--down)">SLIPPING ▼</span><span style="font-family:'Space Mono',monospace;font-size:11px;color:#4a453d">2</span></div>
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 20px;animation:riseIn .5s ease both;animation-delay:.22s">
+          <div style="width:40px;font-family:'Space Mono',monospace;font-size:30px;font-weight:700;color:#f2efe8;text-align:center;line-height:1">2</div>
+          <div style="width:50px;height:50px;border-radius:11px;background:linear-gradient(140deg,#5a7fb0,#1b2540);flex:none"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:14.5px;color:#f2efe8">Alright</div><div style="font-family:'Space Mono',monospace;font-size:10.5px;color:#625d54">last week #1</div></div>
+          <div style="display:flex;align-items:center;gap:4px;font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:var(--down)"><span>▼</span>1</div>
+        </div>
+
+        <!-- Dropped -->
+        <div style="display:flex;align-items:center;gap:8px;margin:20px 20px 8px"><span style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#625d54">DROPPED OUT</span><span style="font-family:'Space Mono',monospace;font-size:11px;color:#4a453d">1</span></div>
+        <div style="display:flex;align-items:center;gap:14px;padding:10px 20px 22px;opacity:0.5">
+          <div style="width:40px;font-family:'Space Mono',monospace;font-size:24px;font-weight:400;color:#625d54;text-align:center">—</div>
+          <div style="width:50px;height:50px;border-radius:11px;background:linear-gradient(140deg,#555,#222);flex:none"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:14.5px;color:#9a948a">Motion Sickness</div><div style="font-family:'Space Mono',monospace;font-size:10.5px;color:#625d54">was #7</div></div>
+          <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">OUT</div>
+        </div>
+
+        <div style="display:flex;justify-content:space-around;align-items:center;padding:14px 0 22px;border-top:1px solid rgba(255,255,255,0.07);background:rgba(6,6,8,0.5)">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:15px;color:#625d54">⌂</span><span style="font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:0.5px;color:#625d54">HOME</span></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:13px;color:var(--gold)">▲</span><span style="font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:0.5px;color:var(--gold)">TRENDS</span></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:14px;color:#625d54">○</span><span style="font-family:'Space Mono',monospace;font-size:9.5px;letter-spacing:0.5px;color:#625d54">YOU</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 05 EMPTY - first visit -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">05 · EMPTY <span style="color:#4a453d">· first visit</span></div>
+      <div data-screen-label="Empty — first visit" style="width:380px;height:560px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 40px">
+          <div style="display:flex;gap:6px;margin-bottom:28px;opacity:0.35">
+            <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(140deg,#8f7fc0,#2e2850)"></div>
+            <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(140deg,#4aa896,#173b3a)"></div>
+            <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(140deg,#e08a4a,#7a2f2f)"></div>
+          </div>
+          <div style="font-size:22px;font-weight:700;color:#f2efe8">{{ c.emptyDashTitle }}</div>
+          <div style="margin-top:12px;font-size:14.5px;color:#9a948a;line-height:1.55">{{ c.emptyDashBody }}</div>
+          <div style="margin-top:24px;font-family:'Space Mono',monospace;font-size:11px;color:#625d54">◷ syncing your last plays…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 06 EMPTY - no snapshots -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">06 · EMPTY <span style="color:#4a453d">· no snapshots (Trends)</span></div>
+      <div data-screen-label="Empty — no snapshots" style="width:380px;height:560px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 40px">
+          <div style="width:64px;height:64px;border-radius:18px;border:1px dashed rgba(208,162,78,0.5);display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--gold);margin-bottom:26px">▲</div>
+          <div style="font-size:22px;font-weight:700;color:#f2efe8">{{ c.emptyTrendsTitle }}</div>
+          <div style="margin-top:12px;font-size:14.5px;color:#9a948a;line-height:1.55">{{ c.emptyTrendsBody }}</div>
+          <div style="margin-top:26px;display:flex;align-items:center;gap:10px;width:100%;max-width:220px">
+            <div style="flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,0.06);overflow:hidden"><div style="width:14%;height:100%;background:var(--gold)"></div></div>
+            <div style="font-family:'Space Mono',monospace;font-size:11px;color:#625d54">0 / 1</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 07 LOADING -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:'Space Mono',monospace;font-size:11px;letter-spacing:1px;color:#8a847a">07 · LOADING <span style="color:#4a453d">· skeleton</span></div>
+      <div data-screen-label="Loading" style="width:380px;height:640px;background:#0d0c0a;border:1px solid rgba(255,255,255,0.07);border-radius:38px;overflow:hidden;box-shadow:0 40px 90px -40px #000;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;padding:16px 26px 0;font-family:'Space Mono',monospace;font-size:12px;color:#8a847a"><span>9:41</span><span style="letter-spacing:2px">•••</span></div>
+        <div style="padding:24px 20px">
+          <div style="height:12px;width:40%;border-radius:6px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.1),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div>
+          <div style="height:22px;width:75%;border-radius:7px;margin-top:12px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.1),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div>
+          <div style="height:44px;border-radius:13px;margin-top:24px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px">
+            <div style="aspect-ratio:1;border-radius:14px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div>
+            <div style="aspect-ratio:1;border-radius:14px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;animation-delay:.2s"></div>
+          </div>
+          <div style="margin-top:22px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;gap:12px;align-items:center"><div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div><div style="flex:1"><div style="height:11px;width:60%;border-radius:5px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div><div style="height:9px;width:40%;border-radius:5px;margin-top:8px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.08),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div></div></div>
+            <div style="display:flex;gap:12px;align-items:center"><div style="width:46px;height:46px;border-radius:10px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;animation-delay:.15s"></div><div style="flex:1"><div style="height:11px;width:55%;border-radius:5px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.09),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div><div style="height:9px;width:35%;border-radius:5px;margin-top:8px;background:linear-gradient(90deg,rgba(255,255,255,0.04),rgba(255,255,255,0.08),rgba(255,255,255,0.04));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite"></div></div></div>
+          </div>
+          <div style="margin-top:26px;text-align:center;font-family:'Space Mono',monospace;font-size:11px;color:#4a453d">loading your sound…</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1400,&quot;height&quot;:900},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#d0a24e&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#d0a24e&quot;,&quot;#e8734a&quot;,&quot;#8a7ff0&quot;,&quot;#4ab8a0&quot;,&quot;#e85a8a&quot;],&quot;section&quot;:&quot;Theme&quot;},&quot;voice&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;playful&quot;,&quot;options&quot;:[&quot;playful&quot;,&quot;plain&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Copy&quot;}}">
+class Component extends DCLogic {
+  state = { range: '4 weeks' };
+  renderVals() {
+    const accent = this.props.accent ?? '#d0a24e';
+    const up = '#8bb996';
+    const down = '#d99a9a';
+    const voice = this.props.voice ?? 'playful';
+
+    const copyMap = {
+      playful: {
+        loginTag: "Wrapped shouldn't only come once a year.",
+        connectSub: "Hook up Spotify and we'll start keeping score.",
+        privacy: "Your listening data stays yours. We only read what you play — never post, never share a thing.",
+        greeting: "Evening. Here's what's been on repeat.",
+        trendsSub: "Cue the drumroll.",
+        emptyDashTitle: "Still learning your taste",
+        emptyDashBody: "Play a few tracks and check back — your dashboard fills in as you listen.",
+        emptyTrendsTitle: "No countdown yet",
+        emptyTrendsBody: "We take a snapshot every Sunday night. Your first chart drops in 6 days."
+      },
+      plain: {
+        loginTag: "Your listening stats, updated all year.",
+        connectSub: "Connect Spotify to start tracking your listening.",
+        privacy: "Your listening data stays yours. We only read your play history — nothing is posted or shared.",
+        greeting: "Your recent listening",
+        trendsSub: "Week of Jun 30 – Jul 6",
+        emptyDashTitle: "No data yet",
+        emptyDashBody: "Your dashboard will populate as you listen.",
+        emptyTrendsTitle: "No snapshots yet",
+        emptyTrendsBody: "We take a weekly snapshot. Your first chart is 6 days away."
+      }
+    };
+    const c = copyMap[voice] || copyMap.playful;
+
+    const G = {
+      orange: 'linear-gradient(140deg,#e08a4a,#7a2f2f)',
+      gold: 'linear-gradient(140deg,#d6a94e,#5c3f16)',
+      teal: 'linear-gradient(140deg,#4aa896,#173b3a)',
+      purple: 'linear-gradient(140deg,#8f7fc0,#2e2850)',
+      blue: 'linear-gradient(140deg,#5a7fb0,#1b2540)',
+      rose: 'linear-gradient(140deg,#d07a8a,#4a2030)',
+      green: 'linear-gradient(140deg,#7faa6a,#243a1c)',
+      crimson: 'linear-gradient(140deg,#c85a5a,#3a1418)',
+      indigo: 'linear-gradient(140deg,#6a6fc0,#22224a)'
+    };
+
+    const data = {
+      '4 weeks': {
+        artists: [
+          { rank: 1, name: 'Frank Ocean', plays: '48 plays', art: G.orange },
+          { rank: 2, name: 'Kendrick Lamar', plays: '41 plays', art: G.blue },
+          { rank: 3, name: 'SZA', plays: '33 plays', art: G.teal },
+          { rank: 4, name: 'Phoebe Bridgers', plays: '29 plays', art: G.purple }
+        ],
+        tracks: [
+          { rank: 1, title: 'Nights', artist: 'Frank Ocean', art: G.orange },
+          { rank: 2, title: 'Alright', artist: 'Kendrick Lamar', art: G.blue },
+          { rank: 3, title: 'Kill Bill', artist: 'SZA', art: G.teal },
+          { rank: 4, title: 'Motion Sickness', artist: 'Phoebe Bridgers', art: G.purple }
+        ]
+      },
+      '6 months': {
+        artists: [
+          { rank: 1, name: 'SZA', plays: '312 plays', art: G.teal },
+          { rank: 2, name: 'Frank Ocean', plays: '288 plays', art: G.orange },
+          { rank: 3, name: 'Tyler, The Creator', plays: '241 plays', art: G.indigo },
+          { rank: 4, name: 'boygenius', plays: '203 plays', art: G.green }
+        ],
+        tracks: [
+          { rank: 1, title: 'Kill Bill', artist: 'SZA', art: G.teal },
+          { rank: 2, title: 'Redbone', artist: 'Childish Gambino', art: G.gold },
+          { rank: 3, title: 'EARFQUAKE', artist: 'Tyler, The Creator', art: G.indigo },
+          { rank: 4, title: 'Not Strong Enough', artist: 'boygenius', art: G.green }
+        ]
+      },
+      'All time': {
+        artists: [
+          { rank: 1, name: 'Frank Ocean', plays: '2,140 plays', art: G.orange },
+          { rank: 2, name: 'Radiohead', plays: '1,880 plays', art: G.crimson },
+          { rank: 3, name: 'Kendrick Lamar', plays: '1,502 plays', art: G.blue },
+          { rank: 4, name: 'Fleetwood Mac', plays: '1,347 plays', art: G.rose }
+        ],
+        tracks: [
+          { rank: 1, title: 'Nights', artist: 'Frank Ocean', art: G.orange },
+          { rank: 2, title: 'Weird Fishes', artist: 'Radiohead', art: G.crimson },
+          { rank: 3, title: 'Dreams', artist: 'Fleetwood Mac', art: G.rose },
+          { rank: 4, title: 'HUMBLE.', artist: 'Kendrick Lamar', art: G.blue }
+        ]
+      }
+    };
+
+    const ranges = ['4 weeks', '6 months', 'All time'];
+    const cur = data[this.state.range] || data['4 weeks'];
+    const rangePills = ranges.map(r => ({
+      label: r,
+      onClick: () => this.setState({ range: r }),
+      bg: r === this.state.range ? accent : 'transparent',
+      color: r === this.state.range ? '#12100b' : '#9a948a',
+      weight: r === this.state.range ? '700' : '500'
+    }));
+
+    return { accent, up, down, c, rangePills, artists: cur.artists, tracks: cur.tracks, rangeLabel: this.state.range };
+  }
+}
+</script>
+</body>
+</html>

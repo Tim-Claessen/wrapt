@@ -1,0 +1,33 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import { createSupabaseServerClient } from '../lib/supabase';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, Astro.locals.runtime.env);
+const {
+  data: { user },
+} = await supabase.auth.getUser();
+
+if (!user) return Astro.redirect('/login');
+
+const { data: profile } = await supabase
+  .from('spotify_profiles')
+  .select('display_name')
+  .eq('user_id', user.id)
+  .maybeSingle();
+
+if (!profile) return Astro.redirect('/connect');
+---
+
+<AppShell title="Dashboard">
+  <div style="display:flex;flex-direction:column;justify-content:center;min-height:70vh;">
+    <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
+      Connected
+    </div>
+    <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">
+      Hey, {profile.display_name ?? 'there'}.
+    </div>
+    <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
+      Still learning your taste — the dashboard lands next.
+    </p>
+  </div>
+</AppShell>

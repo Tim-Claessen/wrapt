@@ -1,0 +1,77 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import { createSupabaseServerClient } from '../lib/supabase';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, Astro.locals.runtime.env);
+const {
+  data: { user },
+} = await supabase.auth.getUser();
+
+if (user) {
+  return Astro.redirect('/connect');
+}
+---
+
+<AppShell title="Login">
+  <div style="display:flex;flex-direction:column;justify-content:center;min-height:70vh;">
+    <div style="font-size:56px;font-weight:700;letter-spacing:-0.04em;color:var(--text-1);line-height:0.9;">
+      Wrapt
+    </div>
+    <p style="margin-top:16px;font-size:17px;color:var(--text-2);line-height:1.45;max-width:280px;">
+      Wrapped shouldn't only come once a year.
+    </p>
+
+    <form id="login-form" style="margin-top:44px;display:flex;flex-direction:column;gap:12px;">
+      <label class="mono" for="email" style="font-size:11px;letter-spacing:1px;color:var(--text-3);">EMAIL</label>
+      <input
+        id="email"
+        name="email"
+        type="email"
+        required
+        placeholder="you@example.com"
+        style="background:var(--surface-raised);border:1px solid var(--hairline);border-radius:13px;padding:15px 16px;font-size:15px;font-family:inherit;color:var(--text-1);outline:none;"
+      />
+      <button
+        type="submit"
+        style="margin-top:6px;background:var(--gold);border:0;border-radius:13px;padding:16px;font-size:15px;font-weight:600;color:var(--gold-on);font-family:inherit;cursor:pointer;"
+      >
+        Send magic link
+      </button>
+      <p id="login-status" class="mono" style="margin-top:6px;font-size:12.5px;color:var(--text-3);text-align:center;">
+        No passwords. We'll email you a link.
+      </p>
+    </form>
+  </div>
+
+  <script>
+    import { createBrowserClient } from '@supabase/ssr';
+
+    const supabase = createBrowserClient(
+      import.meta.env.PUBLIC_SUPABASE_URL,
+      import.meta.env.PUBLIC_SUPABASE_ANON_KEY,
+    );
+
+    const form = document.getElementById('login-form') as HTMLFormElement;
+    const status = document.getElementById('login-status') as HTMLParagraphElement;
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const email = (document.getElementById('email') as HTMLInputElement).value;
+      const submitButton = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+      submitButton.disabled = true;
+      status.textContent = 'Sending…';
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: `${window.location.origin}/api/auth/confirm` },
+      });
+
+      if (error) {
+        status.textContent = error.message;
+        submitButton.disabled = false;
+        return;
+      }
+      status.textContent = `Check ${email} for your link.`;
+    });
+  </script>
+</AppShell>

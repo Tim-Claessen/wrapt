@@ -1,0 +1,71 @@
+---
+interface Props {
+  title: string;
+}
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} · Wrapt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #08080a;
+        --surface: #0d0c0a;
+        --surface-raised: rgba(255, 255, 255, 0.05);
+        --hairline: rgba(255, 255, 255, 0.07);
+        --text-1: #f2efe8;
+        --text-2: #9a948a;
+        --text-3: #625d54;
+        --text-4: #4a453d;
+        --gold: #d0a24e;
+        --gold-on: #12100b;
+        --up: #8bb996;
+        --down: #d99a9a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      body {
+        background: radial-gradient(120% 80% at 50% -10%, #131117, #08080a 60%);
+        color: var(--text-1);
+        font-family: 'Schibsted Grotesk', sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+      }
+
+      main {
+        width: 100%;
+        max-width: 380px;
+      }
+
+      .mono {
+        font-family: 'Space Mono', monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <slot />
+    </main>
+  </body>
+</html>

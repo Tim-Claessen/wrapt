@@ -1,0 +1,19 @@
+.env
+.env.production
+.dev.vars
+
+# build output
+dist/
+.astro/
+
+# dependencies
+node_modules/
+
+# logs
+npm-debug.log*
+
+# macOS-specific files
+.DS_Store
+
+# wrangler
+.wrangler/

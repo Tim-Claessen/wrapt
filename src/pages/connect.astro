@@ -1,0 +1,61 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import { createSupabaseServerClient } from '../lib/supabase';
+
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, Astro.locals.runtime.env);
+const {
+  data: { user },
+} = await supabase.auth.getUser();
+
+if (!user) return Astro.redirect('/login');
+
+const authFailed = Astro.url.searchParams.get('error') === 'spotify_auth_failed';
+---
+
+<AppShell title="Connect Spotify">
+  <div
+    style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;min-height:70vh;"
+  >
+    <div style="position:relative;width:150px;height:120px;margin-bottom:38px;">
+      <div
+        style="position:absolute;left:20px;top:14px;width:88px;height:88px;border-radius:16px;background:linear-gradient(140deg,#8f7fc0,#2e2850);transform:rotate(-9deg);"
+      >
+      </div>
+      <div
+        style="position:absolute;left:44px;top:6px;width:88px;height:88px;border-radius:16px;background:linear-gradient(140deg,#4aa896,#173b3a);transform:rotate(7deg);"
+      >
+      </div>
+      <div
+        style="position:absolute;left:32px;top:20px;width:88px;height:88px;border-radius:16px;background:linear-gradient(140deg,#e08a4a,#7a2f2f);"
+      >
+      </div>
+    </div>
+    <div style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--text-1);">
+      Connect your Spotify
+    </div>
+    <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;max-width:290px;">
+      Connect Spotify to start tracking your listening.
+    </p>
+
+    {
+      authFailed && (
+        <p class="mono" style="margin-top:16px;font-size:12.5px;color:var(--down);">
+          Something went wrong connecting Spotify. Try again.
+        </p>
+      )
+    }
+
+    <a
+      href="/api/auth/spotify"
+      style="margin-top:32px;width:100%;background:var(--gold);border:0;border-radius:14px;padding:17px;font-size:16px;font-weight:600;color:var(--gold-on);font-family:inherit;cursor:pointer;text-decoration:none;display:block;"
+    >
+      Connect Spotify
+    </a>
+    <div
+      style="margin-top:20px;display:flex;gap:9px;align-items:flex-start;text-align:left;color:var(--text-3);font-size:12.5px;line-height:1.5;max-width:300px;"
+    >
+      <span style="color:var(--gold);font-size:13px;">✦</span>
+      <span>Your listening data stays yours. We only read what you play — never post, never share a thing.</span>
+    </div>
+  </div>
+</AppShell>
