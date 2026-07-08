@@ -9,7 +9,12 @@ const {
 
 if (!user) return Astro.redirect('/login');
 
-const authFailed = Astro.url.searchParams.get('error') === 'spotify_auth_failed';
+const errorParam = Astro.url.searchParams.get('error');
+const errorCopy: Record<string, string> = {
+  spotify_auth_failed: 'Something went wrong connecting Spotify. Try again.',
+  token_expired: 'Your Spotify connection expired. Reconnect to keep syncing.',
+};
+const errorMessage = errorParam ? (errorCopy[errorParam] ?? null) : null;
 ---
 
 <AppShell title="Connect Spotify">
@@ -38,9 +43,9 @@ const authFailed = Astro.url.searchParams.get('error') === 'spotify_auth_failed'
     </p>
 
     {
-      authFailed && (
+      errorMessage && (
         <p class="mono" style="margin-top:16px;font-size:12.5px;color:var(--down);">
-          Something went wrong connecting Spotify. Try again.
+          {errorMessage}
         </p>
       )
     }

@@ -1,0 +1,63 @@
+---
+// SPEC "States (must-build)" — first-visit dashboard state: nothing has synced yet at all
+// (historySince === null in index.astro). Faint tile trio + title + body + mono hint, per
+// Wrapt.dc.html screen 05 (rebuilt as real classes, not copied markup).
+interface Props {
+  title: string;
+  body: string;
+  hint: string;
+}
+const { title, body, hint } = Astro.props;
+---
+
+<div class="empty-state">
+  <div class="empty-state__tiles" aria-hidden="true">
+    <div class="empty-state__tile" style="background:linear-gradient(140deg,#8f7fc0,#2e2850);"></div>
+    <div class="empty-state__tile" style="background:linear-gradient(140deg,#4aa896,#173b3a);"></div>
+    <div class="empty-state__tile" style="background:linear-gradient(140deg,#e08a4a,#7a2f2f);"></div>
+  </div>
+  <div class="empty-state__title">{title}</div>
+  <p class="empty-state__body">{body}</p>
+  <p class="empty-state__hint mono">{hint}</p>
+</div>
+
+<style>
+  .empty-state {
+    margin-top: 32px;
+    padding: 32px 20px;
+    text-align: center;
+  }
+
+  .empty-state__tiles {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    opacity: 0.35;
+  }
+
+  .empty-state__tile {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+  }
+
+  .empty-state__title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-1);
+  }
+
+  .empty-state__body {
+    margin-top: 10px;
+    font-size: 14.5px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .empty-state__hint {
+    margin-top: 16px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+</style>

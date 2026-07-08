@@ -9,8 +9,11 @@ import StatsRow from '../components/StatsRow.astro';
 import TrendChart from '../components/TrendChart.astro';
 import ListeningHeatmap from '../components/ListeningHeatmap.astro';
 import GenreMix from '../components/GenreMix.astro';
+import EmptyState from '../components/EmptyState.astro';
+import Skeleton from '../components/Skeleton.astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
 import { getValidSpotifyAccessToken } from '../lib/tokens';
+import { SpotifyTokenExpiredError } from '../lib/spotify';
 import {
   getAvailableGenres,
   getLeaderboard,
@@ -86,12 +89,6 @@ const hasCustomRange = Boolean(customSince && customUntil);
 // 7 days for data while the date form itself keeps showing so the user can refine it.
 const queryWindow: LeaderboardWindow = activeWindow === 'custom' && !hasCustomRange ? '7d' : activeWindow;
 
-let accessToken: string | null = null;
-if (!isComputedWindow) {
-  const tokenInfo = await getValidSpotifyAccessToken(user.id, env);
-  accessToken = tokenInfo?.accessToken ?? null;
-}
-
 const service = createSupabaseServiceClient(env);
 
 // The dashboard's own stats (trend/heatmap/summary) read straight from `plays`, so — unlike the
@@ -102,39 +99,70 @@ const range = resolveWindowRange(
 );
 const trendBucket = pickTrendBucket(range);
 
-const [
-  { hasMovement, entries },
-  availableGenres,
-  historySince,
-  importProgress,
-  recentPlays,
-  summary,
-  trend,
-  heatmap,
-  genreMix,
-] = await Promise.all([
-  getLeaderboard({
-    supabase: service,
-    accessToken,
-    profileId: profile.id,
-    kind: activeKind,
-    window: queryWindow,
-    customSince,
-    customUntil,
-    genre: activeGenre,
-    limit: 10,
-  }),
-  isComputedWindow
-    ? getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil)
-    : Promise.resolve<string[]>([]),
-  getPlaysHistorySince(service, profile.id),
-  getImportProgress(service, profile.id),
-  getRecentPlays(service, profile.id, 8),
-  getListeningSummary(service, profile.id, range),
-  getListeningTrend(service, profile.id, range, trendBucket),
-  getListeningHeatmap(service, profile.id, range),
-  isComputedWindow ? getTopGenresForRange(service, profile.id, range, 6) : Promise.resolve([]),
-]);
+let hasMovement = false;
+let entries: Awaited<ReturnType<typeof getLeaderboard>>['entries'] = [];
+let availableGenres: string[] = [];
+let historySince: Date | null = null;
+let importProgress: Awaited<ReturnType<typeof getImportProgress>> = { total: 0, done: 0, failed: 0, pending: 0 };
+let recentPlays: Awaited<ReturnType<typeof getRecentPlays>> = [];
+let summary: Awaited<ReturnType<typeof getListeningSummary>> = {
+  current: { totalMs: 0, totalPlays: 0, distinctTracks: 0, distinctArtists: 0, activeDays: 0 },
+  previous: null,
+};
+let trend: Awaited<ReturnType<typeof getListeningTrend>> = [];
+let heatmap: Awaited<ReturnType<typeof getListeningHeatmap>> = {
+  grid: Array.from({ length: 7 }, () => Array(24).fill(0)),
+  max: 0,
+};
+let genreMix: Awaited<ReturnType<typeof getTopGenresForRange>> = [];
+let loadError: string | null = null;
+
+try {
+  let accessToken: string | null = null;
+  if (!isComputedWindow) {
+    const tokenInfo = await getValidSpotifyAccessToken(user.id, env);
+    accessToken = tokenInfo?.accessToken ?? null;
+  }
+
+  [
+    { hasMovement, entries },
+    availableGenres,
+    historySince,
+    importProgress,
+    recentPlays,
+    summary,
+    trend,
+    heatmap,
+    genreMix,
+  ] = await Promise.all([
+    getLeaderboard({
+      supabase: service,
+      accessToken,
+      profileId: profile.id,
+      kind: activeKind,
+      window: queryWindow,
+      customSince,
+      customUntil,
+      genre: activeGenre,
+      limit: 10,
+    }),
+    isComputedWindow
+      ? getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil)
+      : Promise.resolve<string[]>([]),
+    getPlaysHistorySince(service, profile.id),
+    getImportProgress(service, profile.id),
+    getRecentPlays(service, profile.id, 8),
+    getListeningSummary(service, profile.id, range),
+    getListeningTrend(service, profile.id, range, trendBucket),
+    getListeningHeatmap(service, profile.id, range),
+    isComputedWindow ? getTopGenresForRange(service, profile.id, range, 6) : Promise.resolve([]),
+  ]);
+} catch (err) {
+  if (err instanceof SpotifyTokenExpiredError) {
+    return Astro.redirect('/connect?error=token_expired');
+  }
+  loadError = 'Something went wrong loading your dashboard. Try refreshing.';
+}
 
 function buildHref(overrides: Record<string, string | null>): string {
   const params = new URLSearchParams(url.searchParams);
@@ -187,151 +215,240 @@ const trendPoints = trend.map((point) => ({
 ---
 
 <AppShell title="Dashboard" wide nav>
-  <div style="max-width:560px;">
-    <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
-      Connected
-    </div>
-    <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">
-      Hey, {profile.display_name ?? 'there'}.
-    </div>
-    <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
-      Here's what's been on repeat.
-    </p>
-
-    <div style="margin-top:20px;">
-      <ImportCallout progress={importProgress} />
-    </div>
-  </div>
-
-  {
-    recentPlays.length > 0 && (
-      <div style="margin-top:28px;">
-        <div style="font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:12px;">Recently played</div>
-        <RecentlyPlayed plays={recentPlays} />
+  <div id="dashboard-content">
+    <div style="max-width:560px;">
+      <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
+        Connected
       </div>
-    )
-  }
-
-  <div style="margin-top:32px;">
-    <RangeToggle
-      options={WINDOWS}
-      active={activeWindow}
-      buildHref={(value) => buildHref({ window: value, genre: null, since: null, until: null })}
-    />
-  </div>
-
-  {
-    activeWindow === 'custom' && (
-      <form method="get" style="margin-top:12px;display:flex;gap:8px;align-items:center;">
-        <input type="hidden" name="kind" value={activeKind} />
-        <input type="hidden" name="window" value="custom" />
-        <input
-          type="date"
-          name="since"
-          value={sinceParam ?? ''}
-          required
-          style="flex:1;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:10px;padding:8px;color:var(--text-1);font-family:'Space Mono',monospace;font-size:12.5px;"
-        />
-        <input
-          type="date"
-          name="until"
-          value={untilParam ?? ''}
-          required
-          style="flex:1;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:10px;padding:8px;color:var(--text-1);font-family:'Space Mono',monospace;font-size:12.5px;"
-        />
-        <button
-          type="submit"
-          style="background:var(--gold);color:var(--gold-on);border:0;border-radius:10px;padding:8px 14px;font-weight:700;font-size:12.5px;font-family:inherit;cursor:pointer;"
-        >
-          Go
-        </button>
-      </form>
-    )
-  }
-
-  {
-    isComputedWindow && historySince !== null && (
-      <p class="mono" style="margin-top:14px;font-size:11.5px;color:var(--text-3);">
-        {historyDaysAgo !== null && historyDaysAgo < 7
-          ? `History since ${historyDaysAgo === 1 ? 'yesterday' : `${historyDaysAgo} days ago`} — the chart fills in as we go.`
-          : `History since ${historySince.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}.`}
+      <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">
+        Hey, {profile.display_name ?? 'there'}.
+      </div>
+      <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
+        Here's what's been on repeat.
       </p>
-    )
-  }
 
-  <div class="dashboard-grid" style="margin-top:28px;">
-    <div class="dashboard-grid__main">
-      <div style="font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:12px;">
-        Your listening <span class="mono" style="font-size:11px;color:var(--text-3);font-weight:400;">· {activeWindowLabel}</span>
-      </div>
-      <StatsRow items={kpis} />
-
-      <div style="margin-top:28px;">
-        <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:10px;">Listening over time</div>
-        <TrendChart points={trendPoints} unit="plays" emptyLabel="Nothing in this window yet." />
+      <div style="margin-top:20px;">
+        <ImportCallout progress={importProgress} />
       </div>
 
-      <div style="margin-top:28px;">
-        <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:10px;">When you listen</div>
-        <ListeningHeatmap grid={heatmap.grid} max={heatmap.max} />
-      </div>
-    </div>
-
-    {
-      isComputedWindow && genreMix.length > 0 && (
-        <div class="dashboard-grid__side">
-          <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:14px;">Genre mix</div>
-          <GenreMix genres={genreMix} />
-        </div>
-      )
-    }
-  </div>
-
-  <div style="margin-top:36px;">
-    <div class="mono" style="display:flex;gap:16px;font-size:12.5px;letter-spacing:0.3px;">
       {
-        KINDS.map((k) => (
-          <a
-            href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
-            style={`text-decoration:none;padding-bottom:6px;border-bottom:2px solid ${k.value === activeKind ? 'var(--gold)' : 'transparent'};color:${k.value === activeKind ? 'var(--text-1)' : 'var(--text-3)'};font-weight:${k.value === activeKind ? '700' : '400'};`}
-          >
-            {k.label}
-          </a>
-        ))
-      }
-    </div>
-
-    {
-      isComputedWindow && availableGenres.length > 0 && (
-        <div style="margin-top:14px;">
-          <GenreSlicer
-            genres={availableGenres}
-            active={activeGenre}
-            buildHref={(genre) => buildHref({ genre })}
-          />
-        </div>
-      )
-    }
-
-    <div style="margin-top:14px;">
-      {
-        entries.length > 0 ? (
-          entries.map((entry) => <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} />)
-        ) : (
-          <p style="margin-top:20px;font-size:14px;color:var(--text-2);line-height:1.5;">
-            {historySince === null
-              ? 'Still learning your taste — check back once we’ve synced a few plays.'
-              : 'Nothing here yet for this window. Try a wider range.'}
+        loadError && (
+          <p class="mono" style="margin-top:16px;font-size:12.5px;color:var(--down);">
+            {loadError}
           </p>
         )
       }
     </div>
+
+    {
+      !loadError && historySince === null && (
+        <EmptyState
+          title="Still learning your taste"
+          body="Play a few tracks and check back — your dashboard fills in as you listen."
+          hint="◷ syncing your last plays…"
+        />
+      )
+    }
+
+    {
+      !loadError && historySince !== null && (
+        <Fragment>
+          {
+            recentPlays.length > 0 && (
+              <div style="margin-top:28px;">
+                <div style="font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:12px;">Recently played</div>
+                <RecentlyPlayed plays={recentPlays} />
+              </div>
+            )
+          }
+
+          <div style="margin-top:32px;">
+            <RangeToggle
+              options={WINDOWS}
+              active={activeWindow}
+              buildHref={(value) => buildHref({ window: value, genre: null, since: null, until: null })}
+            />
+          </div>
+
+          {
+            activeWindow === 'custom' && (
+              <form method="get" class="custom-range-form">
+                <input type="hidden" name="kind" value={activeKind} />
+                <input type="hidden" name="window" value="custom" />
+                <input type="date" name="since" value={sinceParam ?? ''} required class="custom-range-form__input" />
+                <input type="date" name="until" value={untilParam ?? ''} required class="custom-range-form__input" />
+                <button type="submit" class="custom-range-form__submit">
+                  Go
+                </button>
+              </form>
+            )
+          }
+
+          {
+            isComputedWindow && historySince !== null && (
+              <p class="mono" style="margin-top:14px;font-size:11.5px;color:var(--text-3);">
+                {historyDaysAgo !== null && historyDaysAgo < 7
+                  ? `History since ${historyDaysAgo === 1 ? 'yesterday' : `${historyDaysAgo} days ago`} — the chart fills in as we go.`
+                  : `History since ${historySince.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}.`}
+              </p>
+            )
+          }
+
+          <div class="dashboard-grid" style="margin-top:28px;">
+            <div class="dashboard-grid__main">
+              <div style="font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:12px;">
+                Your listening <span class="mono" style="font-size:11px;color:var(--text-3);font-weight:400;">· {activeWindowLabel}</span>
+              </div>
+              <StatsRow items={kpis} />
+
+              <div style="margin-top:28px;">
+                <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:10px;">Listening over time</div>
+                <TrendChart points={trendPoints} unit="plays" emptyLabel="Nothing in this window yet." />
+              </div>
+
+              <div style="margin-top:28px;">
+                <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:10px;">When you listen</div>
+                <ListeningHeatmap grid={heatmap.grid} max={heatmap.max} />
+              </div>
+            </div>
+
+            {
+              isComputedWindow && genreMix.length > 0 && (
+                <div class="dashboard-grid__side">
+                  <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:14px;">Genre mix</div>
+                  <GenreMix genres={genreMix} />
+                </div>
+              )
+            }
+          </div>
+
+          <div style="margin-top:36px;">
+            <div class="mono" style="display:flex;gap:16px;font-size:12.5px;letter-spacing:0.3px;">
+              {
+                KINDS.map((k) => (
+                  <a
+                    href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
+                    style={`text-decoration:none;padding-bottom:6px;border-bottom:2px solid ${k.value === activeKind ? 'var(--gold)' : 'transparent'};color:${k.value === activeKind ? 'var(--text-1)' : 'var(--text-3)'};font-weight:${k.value === activeKind ? '700' : '400'};`}
+                  >
+                    {k.label}
+                  </a>
+                ))
+              }
+            </div>
+
+            {
+              isComputedWindow && availableGenres.length > 0 && (
+                <div style="margin-top:14px;">
+                  <GenreSlicer
+                    genres={availableGenres}
+                    active={activeGenre}
+                    buildHref={(genre) => buildHref({ genre })}
+                  />
+                </div>
+              )
+            }
+
+            {
+              entries.length > 0 && !hasMovement && (
+                <div class="no-movement-badge mono">
+                  <span class="no-movement-badge__glyph">▲</span>
+                  No ranking history for this range yet — try 7 days, 30 days, or a custom range to see climbers and fallers.
+                </div>
+              )
+            }
+
+            <div style="margin-top:14px;">
+              {
+                entries.length > 0 ? (
+                  entries.map((entry) => <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} />)
+                ) : (
+                  <p style="margin-top:20px;font-size:14px;color:var(--text-2);line-height:1.5;">
+                    Nothing here yet for this window. Try a wider range.
+                  </p>
+                )
+              }
+            </div>
+          </div>
+        </Fragment>
+      )
+    }
   </div>
+
+  <template id="dashboard-skeleton-tpl">
+    <Skeleton />
+  </template>
 </AppShell>
+
+<script>
+  // Swap the dashboard's content for the loading skeleton the instant an in-page filter
+  // navigation (range/kind/genre/custom-date links, all same pathname + new query string) starts —
+  // Astro's ClientRouter otherwise just keeps showing the old page until the new one is ready, with
+  // no visible loading feedback. Cross-page navigations (login/connect/import) are left alone.
+  document.addEventListener('astro:before-preparation', (event) => {
+    if (event.to.pathname !== event.from.pathname) return;
+    const content = document.getElementById('dashboard-content');
+    const tpl = document.getElementById('dashboard-skeleton-tpl');
+    if (content instanceof HTMLElement && tpl instanceof HTMLTemplateElement) {
+      content.replaceChildren(tpl.content.cloneNode(true));
+    }
+  });
+</script>
 
 <style>
   .dashboard-grid__side {
     margin-top: 32px;
+  }
+
+  .custom-range-form {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .custom-range-form__input {
+    flex: 1 1 120px;
+    min-width: 0;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 8px;
+    color: var(--text-1);
+    font-family: 'Space Mono', monospace;
+    font-size: 12.5px;
+  }
+
+  .custom-range-form__submit {
+    flex: 0 0 auto;
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-weight: 700;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .no-movement-badge {
+    margin-top: 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-2);
+    border: 1px dashed rgba(208, 162, 78, 0.5);
+    border-radius: 13px;
+  }
+
+  .no-movement-badge__glyph {
+    color: var(--gold);
+    font-size: 13px;
+    flex: 0 0 auto;
   }
 
   @media (min-width: 900px) {

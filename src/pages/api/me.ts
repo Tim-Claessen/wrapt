@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { createSupabaseServerClient } from '../../lib/supabase';
 import { getValidSpotifyAccessToken } from '../../lib/tokens';
-import { getSpotifyProfile } from '../../lib/spotify';
+import { getSpotifyProfile, SpotifyTokenExpiredError } from '../../lib/spotify';
 
 // Smoke endpoint: proves the full round trip — session → stored refresh token → live Spotify call.
 export const GET: APIRoute = async ({ request, cookies, locals }) => {
@@ -12,7 +12,15 @@ export const GET: APIRoute = async ({ request, cookies, locals }) => {
   } = await supabase.auth.getUser();
   if (!user) return new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401 });
 
-  const tokenInfo = await getValidSpotifyAccessToken(user.id, env);
+  let tokenInfo: Awaited<ReturnType<typeof getValidSpotifyAccessToken>>;
+  try {
+    tokenInfo = await getValidSpotifyAccessToken(user.id, env);
+  } catch (err) {
+    if (err instanceof SpotifyTokenExpiredError) {
+      return new Response(JSON.stringify({ connected: false, reason: 'expired' }), { status: 404 });
+    }
+    throw err;
+  }
   if (!tokenInfo) return new Response(JSON.stringify({ connected: false }), { status: 404 });
 
   const profile = await getSpotifyProfile(tokenInfo.accessToken);

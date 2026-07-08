@@ -1,4 +1,5 @@
 ---
+import { ClientRouter } from 'astro:transitions';
 import AppNav from '../components/AppNav.astro';
 
 interface Props {
@@ -100,7 +101,17 @@ const { title, wide = false, nav = false } = Astro.props;
       .mono {
         font-family: 'Space Mono', monospace;
       }
+
+      @keyframes shimmer {
+        0% {
+          background-position: 200% 0;
+        }
+        100% {
+          background-position: -200% 0;
+        }
+      }
     </style>
+    {nav && <ClientRouter />}
   </head>
   <body class:list={{ centered: !wide }}>
     {nav && <AppNav activePath={Astro.url.pathname} />}

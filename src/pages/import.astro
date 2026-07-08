@@ -98,6 +98,19 @@ const enrichPct = progress.total > 0 ? Math.round((progress.done / progress.tota
       errorEl.style.display = 'block';
     }
 
+    function showReconnectError(): void {
+      errorEl.replaceChildren(
+        document.createTextNode('Your Spotify connection expired — '),
+        Object.assign(document.createElement('a'), {
+          href: '/connect',
+          textContent: 'reconnect',
+          style: 'color:inherit;',
+        }),
+        document.createTextNode(' to keep matching your import.'),
+      );
+      errorEl.style.display = 'block';
+    }
+
     function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
       return new Promise((resolve, reject) => {
         unzip(data, (err, unzipped) => (err ? reject(err) : resolve(unzipped)));
@@ -240,6 +253,14 @@ const enrichPct = progress.total > 0 ? Math.round((progress.done / progress.tota
 
       while (status.enrichment.pending > 0) {
         const response = await fetch('/api/import/enrich-tick', { method: 'POST' });
+        if (response.status === 409) {
+          showReconnectError();
+          return;
+        }
+        if (!response.ok) {
+          showError(`Matching paused (error ${response.status}). Try refreshing the page.`);
+          return;
+        }
         const tick: EnrichTickResponse = await response.json();
         await sleep(tick.rateLimited ? (tick.retryAfterSeconds ?? 30) * 1000 : 1500);
         status = await fetchStatus();

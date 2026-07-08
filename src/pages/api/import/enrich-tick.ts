@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../../../lib/supabase';
 import { getValidSpotifyAccessToken } from '../../../lib/tokens';
 import { enrichNextBatch } from '../../../lib/import';
+import { SpotifyTokenExpiredError } from '../../../lib/spotify';
 
 const TICK_BATCH_SIZE = 25; // small on purpose — this runs in the foreground while a tab is open.
 
@@ -21,7 +22,15 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
     .maybeSingle();
   if (!profile) return new Response(JSON.stringify({ error: 'no_spotify_profile' }), { status: 404 });
 
-  const tokenInfo = await getValidSpotifyAccessToken(user.id, env);
+  let tokenInfo: Awaited<ReturnType<typeof getValidSpotifyAccessToken>>;
+  try {
+    tokenInfo = await getValidSpotifyAccessToken(user.id, env);
+  } catch (err) {
+    if (err instanceof SpotifyTokenExpiredError) {
+      return new Response(JSON.stringify({ error: 'spotify_reconnect_required' }), { status: 409 });
+    }
+    throw err;
+  }
   if (!tokenInfo) return new Response(JSON.stringify({ error: 'not_connected' }), { status: 404 });
 
   const result = await enrichNextBatch(service, tokenInfo.accessToken, profile.id, TICK_BATCH_SIZE);

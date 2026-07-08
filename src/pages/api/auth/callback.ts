@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../../../lib/supabase';
 import { encryptToken } from '../../../lib/crypto';
-import { exchangeCodeForTokens, getSpotifyProfile, SPOTIFY_SCOPES } from '../../../lib/spotify';
+import { exchangeCodeForTokens, getSpotifyProfile, SPOTIFY_SCOPES, SpotifyTokenExpiredError } from '../../../lib/spotify';
 
 // Spotify's redirect target: exchanges the auth code for tokens, encrypts the refresh token,
 // and stores the profile. Spotify tokens never reach the client (SDD §2).
@@ -27,12 +27,20 @@ export const GET: APIRoute = async ({ request, cookies, redirect, locals }) => {
   } = await supabase.auth.getUser();
   if (!user) return redirect('/login');
 
-  const tokens = await exchangeCodeForTokens({
-    clientId: env.SPOTIFY_CLIENT_ID,
-    redirectUri: env.SPOTIFY_REDIRECT_URI,
-    code,
-    codeVerifier,
-  });
+  let tokens: Awaited<ReturnType<typeof exchangeCodeForTokens>>;
+  try {
+    tokens = await exchangeCodeForTokens({
+      clientId: env.SPOTIFY_CLIENT_ID,
+      redirectUri: env.SPOTIFY_REDIRECT_URI,
+      code,
+      codeVerifier,
+    });
+  } catch (err) {
+    if (err instanceof SpotifyTokenExpiredError) {
+      return redirect('/connect?error=spotify_auth_failed');
+    }
+    throw err;
+  }
 
   const spotifyProfile = await getSpotifyProfile(tokens.access_token);
   const refreshTokenEnc = await encryptToken(tokens.refresh_token!, env.TOKEN_ENC_KEY);

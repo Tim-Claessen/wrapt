@@ -19,6 +19,17 @@ export class SpotifyRateLimitError extends Error {
   }
 }
 
+// Thrown specifically when Spotify rejects a refresh-token grant with `invalid_grant` — the
+// refresh token was revoked (user disconnected the app, changed password, etc.) or has expired.
+// Distinct from a generic token-request failure so callers can send the user through /connect
+// again instead of surfacing a raw error.
+export class SpotifyTokenExpiredError extends Error {
+  constructor() {
+    super('Spotify refresh token is invalid or revoked; user must reconnect');
+    this.name = 'SpotifyTokenExpiredError';
+  }
+}
+
 // Every Spotify call — token or Web API — funnels through here so 429/Retry-After handling (C10)
 // is enforced once, not re-implemented at each call site. Retries inline (bounded) since Spotify's
 // dev-mode rate limits are a short rolling window; if still limited after that, surfaces the wait
@@ -65,7 +76,14 @@ async function postToken(body: URLSearchParams): Promise<SpotifyTokenResponse> {
     body,
   });
   if (!response.ok) {
-    throw new Error(`Spotify token request failed: ${response.status} ${await response.text()}`);
+    const bodyText = await response.text();
+    // invalid_grant: the refresh token was revoked/expired, or (during the initial code exchange)
+    // the auth code itself was stale — either way the fix is the same, send the user through
+    // /connect again rather than surfacing a raw error.
+    if (response.status === 400 && bodyText.includes('invalid_grant')) {
+      throw new SpotifyTokenExpiredError();
+    }
+    throw new Error(`Spotify token request failed: ${response.status} ${bodyText}`);
   }
   return response.json();
 }

@@ -1,0 +1,106 @@
+---
+// SPEC "States (must-build)" — loading skeleton mirroring the dashboard layout, per Wrapt.dc.html
+// screen 07. Swapped in over the dashboard's main content during in-page navigations (range toggle /
+// kind tabs / genre chips) by the astro:before-preparation script in index.astro — see AppShell's
+// shimmer keyframes.
+---
+
+<div class="skeleton" aria-hidden="true">
+  <div class="skeleton__block skeleton__eyebrow"></div>
+  <div class="skeleton__block skeleton__h1"></div>
+  <div class="skeleton__block skeleton__toggle"></div>
+  <div class="skeleton__grid">
+    <div class="skeleton__block skeleton__tile"></div>
+    <div class="skeleton__block skeleton__tile" style="animation-delay:0.2s;"></div>
+  </div>
+  <div class="skeleton__row">
+    <div class="skeleton__block skeleton__thumb"></div>
+    <div class="skeleton__row-lines">
+      <div class="skeleton__block skeleton__line"></div>
+      <div class="skeleton__block skeleton__line skeleton__line--short"></div>
+    </div>
+  </div>
+  <div class="skeleton__row" style="animation-delay:0.15s;">
+    <div class="skeleton__block skeleton__thumb" style="animation-delay:0.15s;"></div>
+    <div class="skeleton__row-lines">
+      <div class="skeleton__block skeleton__line" style="animation-delay:0.15s;"></div>
+      <div class="skeleton__block skeleton__line skeleton__line--short" style="animation-delay:0.15s;"></div>
+    </div>
+  </div>
+  <p class="skeleton__caption mono">loading your sound…</p>
+</div>
+
+<style>
+  .skeleton__block {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: 8px;
+  }
+
+  .skeleton__eyebrow {
+    width: 90px;
+    height: 12px;
+  }
+
+  .skeleton__h1 {
+    margin-top: 10px;
+    width: 60%;
+    height: 22px;
+  }
+
+  .skeleton__toggle {
+    margin-top: 24px;
+    height: 44px;
+    border-radius: 13px;
+  }
+
+  .skeleton__grid {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .skeleton__tile {
+    aspect-ratio: 1;
+    border-radius: 14px;
+  }
+
+  .skeleton__row {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .skeleton__thumb {
+    flex: 0 0 46px;
+    width: 46px;
+    height: 46px;
+    border-radius: 10px;
+  }
+
+  .skeleton__row-lines {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .skeleton__line {
+    height: 11px;
+    width: 60%;
+  }
+
+  .skeleton__line--short {
+    width: 35%;
+  }
+
+  .skeleton__caption {
+    margin-top: 28px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-4);
+  }
+</style>

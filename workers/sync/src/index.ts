@@ -7,7 +7,7 @@ import { createSupabaseServiceClient } from '../../../src/lib/supabase';
 import { getValidSpotifyAccessToken } from '../../../src/lib/tokens';
 import { syncArtistGenres, syncRecentlyPlayed } from '../../../src/lib/plays';
 import { drainGlobalEnrichmentBacklog } from '../../../src/lib/import';
-import { SpotifyRateLimitError } from '../../../src/lib/spotify';
+import { SpotifyRateLimitError, SpotifyTokenExpiredError } from '../../../src/lib/spotify';
 
 // Larger than the /import page's own foreground tick (25) since this runs unattended and can
 // afford to spend more of the cron's own time budget per cycle.
@@ -71,6 +71,13 @@ async function runSync(env: SyncEnv): Promise<void> {
         console.warn(
           `[sync] profile ${profile.id} rate limited, skipping this cycle (retry after ${err.retryAfterSeconds}s)`,
         );
+        continue;
+      }
+      if (err instanceof SpotifyTokenExpiredError) {
+        // Not a bug — the user needs to reconnect via /connect. No "needs reconnect" flag is
+        // persisted (out of scope); this just keeps it out of the generic error log below so a
+        // dead refresh token doesn't read as a real failure on every single cron cycle.
+        console.warn(`[sync] profile ${profile.id} needs reconnect (refresh token invalid/revoked)`);
         continue;
       }
       console.error(`[sync] profile ${profile.id} failed:`, err);
