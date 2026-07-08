@@ -1,0 +1,93 @@
+---
+// KPI row — dataviz's "handful of headline numbers" pattern: value in Space Mono (Wrapt's numeral
+// face, SPEC "Typography"), optional signed delta vs the previous equal period. No sparkline —
+// TrendChart directly below already carries the shape of the period.
+import type { Delta } from '../lib/format';
+
+interface StatItem {
+  label: string;
+  value: string;
+  delta?: Delta | null;
+}
+interface Props {
+  items: StatItem[];
+}
+const { items } = Astro.props;
+---
+
+<div class="stats-row">
+  {
+    items.map((item) => (
+      <div class="stats-row__tile">
+        <div class="stats-row__label mono">{item.label}</div>
+        <div class="stats-row__value mono">{item.value}</div>
+        {item.delta && item.delta.direction !== 'flat' && (
+          <div
+            class:list={[
+              'stats-row__delta',
+              'mono',
+              item.delta.direction === 'up' ? 'stats-row__delta--up' : 'stats-row__delta--down',
+            ]}
+          >
+            {item.delta.direction === 'up' ? '▲' : '▼'}
+            {item.delta.percent === null ? ' new' : ` ${item.delta.percent}%`}
+          </div>
+        )}
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .stats-row__tile {
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 14px 16px;
+  }
+
+  .stats-row__label {
+    font-size: 10.5px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .stats-row__value {
+    margin-top: 8px;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-1);
+    line-height: 1;
+  }
+
+  .stats-row__delta {
+    margin-top: 7px;
+    font-size: 11.5px;
+    font-weight: 700;
+  }
+
+  .stats-row__delta--up {
+    color: var(--up);
+  }
+
+  .stats-row__delta--down {
+    color: var(--down);
+  }
+
+  @media (min-width: 640px) {
+    .stats-row {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    .stats-row__value {
+      font-size: 27px;
+    }
+  }
+</style>

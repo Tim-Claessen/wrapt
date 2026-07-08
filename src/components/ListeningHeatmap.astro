@@ -1,0 +1,124 @@
+---
+// "When do you listen" — a magnitude-over-a-grid job, so sequential gold per dataviz's form table
+// (heatmap → sequential, one hue). Intensity is color-mix'd off var(--gold) rather than a
+// hardcoded hex so it stays themeable (CLAUDE.md: "--gold is themeable — read it everywhere").
+import { WEEKDAY_LABELS } from '../lib/format';
+
+interface Props {
+  grid: number[][]; // [weekday 0..6][hour 0..23]
+  max: number;
+}
+const { grid, max } = Astro.props;
+
+const HOUR_TICKS: { hour: number; label: string }[] = [
+  { hour: 0, label: '12a' },
+  { hour: 3, label: '3a' },
+  { hour: 6, label: '6a' },
+  { hour: 9, label: '9a' },
+  { hour: 12, label: '12p' },
+  { hour: 15, label: '3p' },
+  { hour: 18, label: '6p' },
+  { hour: 21, label: '9p' },
+];
+
+const CELL = 16;
+const GAP = 2;
+const PITCH = CELL + GAP;
+const gridWidth = 24 * PITCH - GAP;
+
+function intensityPct(count: number): number {
+  if (count <= 0 || max <= 0) return 0;
+  return Math.round(15 + 75 * (count / max));
+}
+---
+
+<div class="heatmap">
+  <div class="heatmap__inner">
+    <div class="heatmap__axis" style={`width:${gridWidth}px;`}>
+      {
+        HOUR_TICKS.map((tick) => (
+          <span class="heatmap__axis-label mono" style={`left:${tick.hour * PITCH}px;`}>
+            {tick.label}
+          </span>
+        ))
+      }
+    </div>
+    {
+      grid.map((row, weekday) => (
+        <div class="heatmap__row">
+          <span class="heatmap__row-label mono">{WEEKDAY_LABELS[weekday]}</span>
+          <div class="heatmap__cells">
+            {row.map((count, hour) => {
+              const pct = intensityPct(count);
+              return (
+                <div
+                  class="heatmap__cell"
+                  style={pct > 0 ? `background:color-mix(in srgb, var(--gold) ${pct}%, transparent);` : ''}
+                  title={`${WEEKDAY_LABELS[weekday]} ${hour}:00 — ${count} ${count === 1 ? 'play' : 'plays'}`}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .heatmap {
+    overflow-x: auto;
+  }
+
+  .heatmap__inner {
+    display: inline-block;
+    min-width: 100%;
+  }
+
+  .heatmap__axis {
+    position: relative;
+    height: 16px;
+    margin-left: 32px;
+  }
+
+  .heatmap__axis-label {
+    position: absolute;
+    top: 0;
+    font-size: 8.5px;
+    color: var(--text-3);
+  }
+
+  .heatmap__row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-top: 2px;
+  }
+
+  .heatmap__row-label {
+    flex: 0 0 32px;
+    position: sticky;
+    left: 0;
+    font-size: 9px;
+    color: var(--text-3);
+    background: var(--bg);
+  }
+
+  .heatmap__cells {
+    display: flex;
+    gap: 2px;
+  }
+
+  .heatmap__cell {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    background: var(--surface-raised);
+    transition: transform 0.1s ease;
+  }
+
+  .heatmap__cell:hover {
+    transform: scale(1.15);
+  }
+</style>

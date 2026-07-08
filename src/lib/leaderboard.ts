@@ -17,6 +17,10 @@ const NATIVE_TIME_RANGE: Record<'4w' | '6m' | 'all', SpotifyTopTimeRange> = {
   all: 'long_term',
 };
 const COMPUTED_WINDOW_DAYS: Record<'7d' | '30d', number> = { '7d': 7, '30d': 30 };
+// Approximate day-spans mirroring Spotify's short/medium_term windows — used only to give the
+// dashboard's own stats (which read from `plays`, not the Spotify top endpoints) a comparable
+// "previous period" for native windows, which otherwise have no rank-change data at all.
+const NATIVE_WINDOW_DAYS: Record<'4w' | '6m', number> = { '4w': 28, '6m': 183 };
 
 // Safely before any real Spotify listening data (Spotify launched 2008) — used as `lifetime`'s
 // `since` so the query is just "everything," without needing a per-profile earliest-play lookup.
@@ -38,7 +42,7 @@ export interface LeaderboardResult {
   entries: LeaderboardEntry[];
 }
 
-interface DateRange {
+export interface DateRange {
   since: Date;
   until: Date;
   prevSince: Date;
@@ -49,10 +53,19 @@ function computedRange(
   window: '7d' | '30d' | 'custom' | 'lifetime',
   custom?: { since: Date; until: Date },
 ): DateRange {
-  if (window === 'lifetime') {
-    // Zero-width prior window — the RPCs' prev CTEs just return no rows, so every prev_rank comes
-    // back null. That's fine: getLeaderboard sets hasMovement=false for lifetime, so callers never
-    // render prevRank for it (avoids every row falsely showing as "NEW" forever).
+  return resolveWindowRange(window, custom);
+}
+
+// Date range (plus an equal-length "previous period" for deltas) for *any* window, including the
+// native Spotify ones (4w/6m/all) — those have no rank-change data from Spotify's top endpoints,
+// but the dashboard's own stats read from `plays` directly, so they can still show a trend.
+export function resolveWindowRange(
+  window: LeaderboardWindow,
+  custom?: { since: Date; until: Date },
+): DateRange {
+  if (window === 'lifetime' || window === 'all') {
+    // Zero-width prior window — "previous lifetime" isn't meaningful. Callers that need to know
+    // whether a delta is meaningful check for this (see hasMovement / getListeningSummary).
     const until = new Date();
     return { since: LIFETIME_START, until, prevSince: LIFETIME_START, prevUntil: LIFETIME_START };
   }
@@ -66,7 +79,7 @@ function computedRange(
       prevUntil: custom.since,
     };
   }
-  const days = COMPUTED_WINDOW_DAYS[window];
+  const days = window === '4w' || window === '6m' ? NATIVE_WINDOW_DAYS[window] : COMPUTED_WINDOW_DAYS[window];
   const until = new Date();
   const since = new Date(until.getTime() - days * 24 * 60 * 60 * 1000);
   return {
@@ -252,6 +265,19 @@ export async function getAvailableGenres(
   });
   if (error) throw error;
   return (data ?? []).map((row: { genre: string }) => row.genre);
+}
+
+// Top genres for the dashboard's "genre mix" chart — a thin wrapper around computedGenres that
+// drops the prev-rank movement data callers don't need for a plain magnitude bar chart. Genre
+// data only exists for computed windows (see NATIVE_WINDOWS note on getLeaderboard).
+export async function getTopGenresForRange(
+  supabase: SupabaseClient,
+  profileId: string,
+  range: DateRange,
+  limit = 6,
+): Promise<{ genre: string; playCount: number }[]> {
+  const entries = await computedGenres(supabase, profileId, range, limit);
+  return entries.map((entry) => ({ genre: entry.title, playCount: entry.playCount ?? 0 }));
 }
 
 // "History since <date>" note — lets sparse early computed windows read as expected, not broken.

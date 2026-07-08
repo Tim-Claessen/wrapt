@@ -1,0 +1,131 @@
+---
+// "Listening over time" — trend job, bar form (dataviz choosing-a-form: trend over time → line/
+// area, but discrete buckets + needing a tappable per-bar tooltip on mobile favors bars here).
+// Single series, sequential gold, so no legend needed (marks-and-anatomy: "a single series needs
+// no legend box"). One direct label on the peak bar; every bar carries a native tooltip via
+// <title> so the exact value is always reachable, not just visible at the peak.
+interface Point {
+  label: string;
+  value: number;
+}
+interface Props {
+  points: Point[];
+  unit: string; // e.g. "plays" — used in the tooltip text
+  emptyLabel: string;
+}
+const { points, unit, emptyLabel } = Astro.props;
+
+const SLOT = 34;
+const BAR_W = 20;
+const CHART_H = 108;
+const BASELINE_Y = 108;
+const TOP_PAD = 22; // room for the peak-bar value label
+const AXIS_H = 18;
+const width = Math.max(points.length * SLOT, SLOT);
+const height = TOP_PAD + CHART_H + AXIS_H;
+
+const max = Math.max(...points.map((p) => p.value), 1);
+const peakIndex = points.reduce((best, p, i) => (p.value > points[best].value ? i : best), 0);
+
+function roundedTopRectPath(x: number, y: number, w: number, h: number, r: number): string {
+  const rr = Math.min(r, h / 2, w / 2);
+  return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`;
+}
+
+const bars = points.map((p, i) => {
+  const h = p.value <= 0 ? 0 : Math.max((p.value / max) * CHART_H, 3);
+  const x = i * SLOT + (SLOT - BAR_W) / 2;
+  const y = TOP_PAD + (BASELINE_Y - h);
+  return { ...p, x, y, w: BAR_W, h, isPeak: i === peakIndex && p.value > 0 };
+});
+
+// Sparse x-axis labels: first, ~middle, last — never one per bar (marks-and-anatomy: label selectively).
+const labelIndices = new Set(
+  points.length <= 1 ? [0] : [0, Math.round((points.length - 1) / 2), points.length - 1],
+);
+---
+
+{
+  points.length === 0 || max === 0 ? (
+    <p class="mono trend-chart__empty">{emptyLabel}</p>
+  ) : (
+    <div class="trend-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" preserveAspectRatio="none" role="img" aria-label={`${unit} over time`}>
+        <line x1="0" y1={TOP_PAD + BASELINE_Y} x2={width} y2={TOP_PAD + BASELINE_Y} class="trend-chart__baseline" />
+        {bars.map((bar) => (
+          <g>
+            {bar.h > 0 && (
+              <path d={roundedTopRectPath(bar.x, bar.y, bar.w, bar.h, 4)} class="trend-chart__bar">
+                <title>
+                  {bar.label}: {bar.value} {unit}
+                </title>
+              </path>
+            )}
+            {bar.isPeak && (
+              <text x={bar.x + bar.w / 2} y={bar.y - 8} class="trend-chart__peak-label mono" text-anchor="middle">
+                {bar.value}
+              </text>
+            )}
+          </g>
+        ))}
+        {points.map((p, i) =>
+          labelIndices.has(i) ? (
+            <text
+              x={i * SLOT + SLOT / 2}
+              y={TOP_PAD + BASELINE_Y + 14}
+              class="trend-chart__axis-label mono"
+              text-anchor="middle"
+            >
+              {p.label}
+            </text>
+          ) : null,
+        )}
+      </svg>
+    </div>
+  )
+}
+
+<style>
+  .trend-chart {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .trend-chart svg {
+    display: block;
+    min-width: 100%;
+  }
+
+  .trend-chart__baseline {
+    stroke: var(--hairline);
+    stroke-width: 1;
+  }
+
+  .trend-chart__bar {
+    fill: var(--gold);
+    opacity: 0.85;
+    transition: opacity 0.15s ease;
+  }
+
+  .trend-chart__bar:hover {
+    opacity: 1;
+  }
+
+  .trend-chart__peak-label {
+    fill: var(--gold);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .trend-chart__axis-label {
+    fill: var(--text-3);
+    font-size: 8.5px;
+  }
+
+  .trend-chart__empty {
+    font-size: 12.5px;
+    color: var(--text-3);
+    padding: 20px 0;
+    text-align: center;
+  }
+</style>

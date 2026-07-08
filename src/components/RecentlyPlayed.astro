@@ -1,0 +1,91 @@
+---
+// SPEC's "Recently played row," rendered as a horizontal art-led strip rather than a plain list —
+// this is the dashboard's most graphical, least mono-numeral section, so it leans on real album
+// art (falling back to the duotone gradient tile SPEC calls out for missing/loading art).
+import { formatRelativeTime } from '../lib/format';
+import type { RecentPlay } from '../lib/stats';
+
+interface Props {
+  plays: RecentPlay[];
+}
+const { plays } = Astro.props;
+const now = new Date();
+---
+
+{
+  plays.length > 0 && (
+    <div class="recently-played">
+      {plays.map((play) => (
+        <div class="recently-played__item">
+          <div class="recently-played__art">
+            {play.albumImage ? (
+              <img src={play.albumImage} alt="" loading="lazy" />
+            ) : (
+              <div class="recently-played__art-fallback" />
+            )}
+          </div>
+          <div class="recently-played__title">{play.trackName}</div>
+          <div class="recently-played__meta mono">
+            {play.artistNames[0] ?? ''} · {formatRelativeTime(play.playedAt, now)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+<style>
+  .recently-played {
+    display: flex;
+    gap: 14px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .recently-played::-webkit-scrollbar {
+    display: none;
+  }
+
+  .recently-played__item {
+    flex: 0 0 auto;
+    width: 104px;
+  }
+
+  .recently-played__art {
+    width: 104px;
+    height: 104px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .recently-played__art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .recently-played__art-fallback {
+    width: 100%;
+    height: 100%;
+  }
+
+  .recently-played__title {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .recently-played__meta {
+    margin-top: 2px;
+    font-size: 10.5px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>

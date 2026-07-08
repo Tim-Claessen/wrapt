@@ -1,0 +1,149 @@
+---
+// The app's persistent nav — SPEC's "bottom nav" component, extended for desktop: bottom bar on
+// mobile (thumb reach), left rail on desktop (there's horizontal room to spare, and a fixed rail
+// reads as an actual app shell rather than a phone mockup stretched wide). Same markup renders
+// both; only CSS repositions it.
+interface NavItem {
+  href: string;
+  label: string;
+  icon: string;
+}
+interface Props {
+  activePath: string;
+}
+const { activePath } = Astro.props;
+
+const items: NavItem[] = [
+  { href: '/', label: 'Home', icon: '⌂' },
+  { href: '/import', label: 'Import', icon: '⇪' },
+];
+---
+
+<nav class="app-nav">
+  <div class="app-nav__brand mono">Wrapt</div>
+  <div class="app-nav__items">
+    {
+      items.map((item) => (
+        <a href={item.href} class:list={['app-nav__item', { 'app-nav__item--active': item.href === activePath }]}>
+          <span class="app-nav__icon" aria-hidden="true">
+            {item.icon}
+          </span>
+          <span class="app-nav__label mono">{item.label}</span>
+        </a>
+      ))
+    }
+  </div>
+</nav>
+
+<style>
+  .app-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    padding: 12px 0 max(12px, env(safe-area-inset-bottom));
+    background: rgba(8, 8, 10, 0.82);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid var(--hairline);
+  }
+
+  .app-nav__brand {
+    display: none;
+  }
+
+  .app-nav__items {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .app-nav__item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    text-decoration: none;
+    color: var(--text-3);
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .app-nav__icon {
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .app-nav__label {
+    font-size: 9.5px;
+    letter-spacing: 0.5px;
+  }
+
+  .app-nav__item--active {
+    color: var(--gold);
+  }
+
+  @media (min-width: 900px) {
+    .app-nav {
+      top: 0;
+      right: auto;
+      width: 220px;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: 40px 20px;
+      gap: 40px;
+      background: rgba(8, 8, 10, 0.6);
+      border-top: 0;
+      border-right: 1px solid var(--hairline);
+      backdrop-filter: none;
+    }
+
+    .app-nav__brand {
+      display: block;
+      font-family: 'Schibsted Grotesk', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text-1);
+      padding-left: 4px;
+    }
+
+    .app-nav__items {
+      flex-direction: column;
+      align-items: stretch;
+      max-width: none;
+      gap: 6px;
+    }
+
+    .app-nav__item {
+      flex-direction: row;
+      justify-content: flex-start;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      transition: background 0.15s ease;
+    }
+
+    .app-nav__item:hover {
+      background: var(--surface-raised);
+    }
+
+    .app-nav__icon {
+      font-size: 15px;
+      width: 18px;
+      text-align: center;
+    }
+
+    .app-nav__label {
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+  }
+</style>
