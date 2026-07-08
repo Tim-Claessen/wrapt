@@ -1,0 +1,62 @@
+---
+// Chip row cross-filtering the leaderboard by genre. Only shown for computed windows (7d/30d/
+// custom) — genre data comes from artists_cache, which native Spotify top-endpoint windows don't join.
+interface Props {
+  genres: string[];
+  active: string | null;
+  buildHref: (genre: string | null) => string;
+}
+const { genres, active, buildHref } = Astro.props;
+---
+
+{
+  genres.length > 0 && (
+    <div class="genre-slicer mono">
+      <a href={buildHref(null)} class:list={['genre-slicer__chip', { 'genre-slicer__chip--active': !active }]}>
+        All genres
+      </a>
+      {genres.map((genre) => (
+        <a
+          href={buildHref(genre)}
+          class:list={['genre-slicer__chip', { 'genre-slicer__chip--active': genre === active }]}
+        >
+          {genre}
+        </a>
+      ))}
+    </div>
+  )
+}
+
+<style>
+  .genre-slicer {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .genre-slicer::-webkit-scrollbar {
+    display: none;
+  }
+
+  .genre-slicer__chip {
+    flex: 0 0 auto;
+    padding: 7px 13px;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    color: var(--text-2);
+    text-decoration: none;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+    white-space: nowrap;
+    transition: all 0.18s ease;
+  }
+
+  .genre-slicer__chip--active {
+    background: var(--gold);
+    border-color: var(--gold);
+    color: var(--gold-on);
+    font-weight: 700;
+  }
+</style>

@@ -1,0 +1,60 @@
+---
+// Segmented control — SPEC "Range toggle". Navigates via plain links (query-param driven SSR),
+// no client JS: the active pill is just whichever option matches the current value server-side.
+interface Option {
+  value: string;
+  label: string;
+}
+interface Props {
+  options: Option[];
+  active: string;
+  buildHref: (value: string) => string;
+}
+const { options, active, buildHref } = Astro.props;
+---
+
+<div class="range-toggle mono" role="tablist">
+  {
+    options.map((option) => (
+      <a
+        href={buildHref(option.value)}
+        class:list={['range-toggle__pill', { 'range-toggle__pill--active': option.value === active }]}
+        role="tab"
+        aria-selected={option.value === active}
+      >
+        {option.label}
+      </a>
+    ))
+  }
+</div>
+
+<style>
+  .range-toggle {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+    overflow-x: auto;
+  }
+
+  .range-toggle__pill {
+    flex: 1 0 auto;
+    text-align: center;
+    padding: 8px 10px;
+    font-size: 11.5px;
+    letter-spacing: 0.3px;
+    color: var(--text-2);
+    text-decoration: none;
+    border-radius: 10px;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+  }
+
+  .range-toggle__pill--active {
+    background: var(--gold);
+    color: var(--gold-on);
+    font-weight: 700;
+  }
+</style>

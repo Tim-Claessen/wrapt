@@ -1,0 +1,15 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "compatibility_date": "2026-07-07",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "name": "wrapt-sync",
+  "main": "src/index.ts",
+  "triggers": {
+    // Every 2 hours — /me/player/recently-played only retains the last 50 plays, so a lazier
+    // schedule risks a long listening day overflowing the window before we've captured it.
+    "crons": ["0 */2 * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

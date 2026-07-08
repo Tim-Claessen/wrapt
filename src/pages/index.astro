@@ -1,8 +1,20 @@
 ---
 import AppShell from '../layouts/AppShell.astro';
-import { createSupabaseServerClient } from '../lib/supabase';
+import RangeToggle from '../components/RangeToggle.astro';
+import GenreSlicer from '../components/GenreSlicer.astro';
+import LeaderboardRow from '../components/LeaderboardRow.astro';
+import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
+import { getValidSpotifyAccessToken } from '../lib/tokens';
+import {
+  getAvailableGenres,
+  getLeaderboard,
+  getPlaysHistorySince,
+  type LeaderboardKind,
+  type LeaderboardWindow,
+} from '../lib/leaderboard';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, Astro.locals.runtime.env);
+const env = Astro.locals.runtime.env;
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
 const {
   data: { user },
 } = await supabase.auth.getUser();
@@ -11,23 +23,188 @@ if (!user) return Astro.redirect('/login');
 
 const { data: profile } = await supabase
   .from('spotify_profiles')
-  .select('display_name')
+  .select('id, display_name')
   .eq('user_id', user.id)
   .maybeSingle();
 
 if (!profile) return Astro.redirect('/connect');
+
+const url = Astro.url;
+
+const KINDS: { value: LeaderboardKind; label: string }[] = [
+  { value: 'artists', label: 'Artists' },
+  { value: 'tracks', label: 'Tracks' },
+  { value: 'genres', label: 'Genres' },
+];
+const WINDOWS: { value: LeaderboardWindow; label: string }[] = [
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '4w', label: '4 weeks' },
+  { value: '6m', label: '6 months' },
+  { value: 'all', label: 'All time' },
+  { value: 'custom', label: 'Custom' },
+];
+const NATIVE_WINDOWS = new Set<LeaderboardWindow>(['4w', '6m', 'all']);
+
+const kindParam = url.searchParams.get('kind');
+const activeKind: LeaderboardKind = KINDS.some((k) => k.value === kindParam)
+  ? (kindParam as LeaderboardKind)
+  : 'artists';
+
+const windowParam = url.searchParams.get('window');
+const activeWindow: LeaderboardWindow = WINDOWS.some((w) => w.value === windowParam)
+  ? (windowParam as LeaderboardWindow)
+  : '7d';
+const isComputedWindow = !NATIVE_WINDOWS.has(activeWindow);
+
+const activeGenre = isComputedWindow ? url.searchParams.get('genre') : null;
+
+const sinceParam = url.searchParams.get('since');
+const untilParam = url.searchParams.get('until');
+const customSince = activeWindow === 'custom' && sinceParam ? new Date(sinceParam) : undefined;
+const customUntil = activeWindow === 'custom' && untilParam ? new Date(`${untilParam}T23:59:59`) : undefined;
+const hasCustomRange = Boolean(customSince && customUntil);
+// A custom window with no dates picked yet still needs *something* to query — default to the last
+// 7 days for data while the date form itself keeps showing so the user can refine it.
+const queryWindow: LeaderboardWindow = activeWindow === 'custom' && !hasCustomRange ? '7d' : activeWindow;
+
+let accessToken: string | null = null;
+if (!isComputedWindow) {
+  const tokenInfo = await getValidSpotifyAccessToken(user.id, env);
+  accessToken = tokenInfo?.accessToken ?? null;
+}
+
+const service = createSupabaseServiceClient(env);
+
+const [{ computed, entries }, availableGenres, historySince] = await Promise.all([
+  getLeaderboard({
+    supabase: service,
+    accessToken,
+    profileId: profile.id,
+    kind: activeKind,
+    window: queryWindow,
+    customSince,
+    customUntil,
+    genre: activeGenre,
+    limit: 10,
+  }),
+  isComputedWindow
+    ? getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil)
+    : Promise.resolve<string[]>([]),
+  getPlaysHistorySince(service, profile.id),
+]);
+
+function buildHref(overrides: Record<string, string | null>): string {
+  const params = new URLSearchParams(url.searchParams);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === null) params.delete(key);
+    else params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `${url.pathname}?${query}` : url.pathname;
+}
+
+const rowShape = activeKind === 'artists' ? 'circle' : 'square';
+
+const historyDaysAgo = historySince
+  ? Math.max(1, Math.round((Date.now() - historySince.getTime()) / (24 * 60 * 60 * 1000)))
+  : null;
 ---
 
 <AppShell title="Dashboard">
-  <div style="display:flex;flex-direction:column;justify-content:center;min-height:70vh;">
-    <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
-      Connected
+  <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
+    Connected
+  </div>
+  <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">
+    Hey, {profile.display_name ?? 'there'}.
+  </div>
+  <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
+    Here's what's been on repeat.
+  </p>
+
+  <div style="margin-top:28px;">
+    <div class="mono" style="display:flex;gap:16px;font-size:12.5px;letter-spacing:0.3px;">
+      {
+        KINDS.map((k) => (
+          <a
+            href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
+            style={`text-decoration:none;padding-bottom:6px;border-bottom:2px solid ${k.value === activeKind ? 'var(--gold)' : 'transparent'};color:${k.value === activeKind ? 'var(--text-1)' : 'var(--text-3)'};font-weight:${k.value === activeKind ? '700' : '400'};`}
+          >
+            {k.label}
+          </a>
+        ))
+      }
     </div>
-    <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">
-      Hey, {profile.display_name ?? 'there'}.
+
+    <div style="margin-top:16px;">
+      <RangeToggle
+        options={WINDOWS}
+        active={activeWindow}
+        buildHref={(value) => buildHref({ window: value, genre: null, since: null, until: null })}
+      />
     </div>
-    <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
-      Still learning your taste — the dashboard lands next.
-    </p>
+
+    {
+      activeWindow === 'custom' && (
+        <form method="get" style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+          <input type="hidden" name="kind" value={activeKind} />
+          <input type="hidden" name="window" value="custom" />
+          <input
+            type="date"
+            name="since"
+            value={sinceParam ?? ''}
+            required
+            style="flex:1;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:10px;padding:8px;color:var(--text-1);font-family:'Space Mono',monospace;font-size:12.5px;"
+          />
+          <input
+            type="date"
+            name="until"
+            value={untilParam ?? ''}
+            required
+            style="flex:1;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:10px;padding:8px;color:var(--text-1);font-family:'Space Mono',monospace;font-size:12.5px;"
+          />
+          <button
+            type="submit"
+            style="background:var(--gold);color:var(--gold-on);border:0;border-radius:10px;padding:8px 14px;font-weight:700;font-size:12.5px;font-family:inherit;cursor:pointer;"
+          >
+            Go
+          </button>
+        </form>
+      )
+    }
+
+    {
+      isComputedWindow && availableGenres.length > 0 && (
+        <div style="margin-top:14px;">
+          <GenreSlicer
+            genres={availableGenres}
+            active={activeGenre}
+            buildHref={(genre) => buildHref({ genre })}
+          />
+        </div>
+      )
+    }
+
+    {
+      isComputedWindow && historyDaysAgo !== null && historyDaysAgo < 7 && (
+        <p class="mono" style="margin-top:14px;font-size:11.5px;color:var(--text-3);">
+          History since {historyDaysAgo === 1 ? 'yesterday' : `${historyDaysAgo} days ago`} — the chart fills in as we go.
+        </p>
+      )
+    }
+
+    <div style="margin-top:8px;">
+      {
+        entries.length > 0 ? (
+          entries.map((entry) => <LeaderboardRow entry={entry} computed={computed} shape={rowShape} />)
+        ) : (
+          <p style="margin-top:20px;font-size:14px;color:var(--text-2);line-height:1.5;">
+            {historySince === null
+              ? 'Still learning your taste — check back once we’ve synced a few plays.'
+              : 'Nothing here yet for this window. Try a wider range.'}
+          </p>
+        )
+      }
+    </div>
   </div>
 </AppShell>
