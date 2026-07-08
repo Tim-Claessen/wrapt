@@ -1,20 +1,25 @@
 ---
-// Mirrors SPEC's "Trends row": big mono rank · art · title/meta · movement indicator.
-// Movement is only meaningful when `showMovement` is true — native Spotify windows and the
-// lifetime window both have no usable prior-period data (lifetime has no "previous lifetime").
+// Mirrors SPEC's "Trends row": big mono rank · art · title/meta · plays+minutes · movement.
+// Movement is only meaningful when `showMovement` is true — the `all` window has no comparable
+// prior period. When `href` is set the whole row becomes a drill-down link (e.g. artist → their
+// tracks) with a hover affordance.
 import type { LeaderboardEntry } from '../lib/leaderboard';
+import { formatMinutes } from '../lib/format';
 
 interface Props {
   entry: LeaderboardEntry;
   showMovement: boolean;
   shape: 'circle' | 'square';
+  href?: string | null;
 }
-const { entry, showMovement, shape } = Astro.props;
+const { entry, showMovement, shape, href } = Astro.props;
 
 const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.rank : null;
+const Wrapper = href ? 'a' : 'div';
+const minutes = entry.totalMs && entry.totalMs > 0 ? formatMinutes(entry.totalMs) : null;
 ---
 
-<div class="lb-row">
+<Wrapper class:list={['lb-row', { 'lb-row--link': Boolean(href) }]} {...(href ? { href } : {})}>
   <div class="lb-row__rank mono">{entry.rank}</div>
   <div class:list={['lb-row__art', { 'lb-row__art--circle': shape === 'circle' }]}>
     {entry.image ? <img src={entry.image} alt="" loading="lazy" /> : <div class="lb-row__art-fallback" />}
@@ -23,6 +28,14 @@ const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.r
     <div class="lb-row__title">{entry.title}</div>
     {entry.subtitle && <div class="lb-row__subtitle">{entry.subtitle}</div>}
   </div>
+  {
+    entry.playCount !== null && (
+      <div class="lb-row__stats mono">
+        <span class="lb-row__plays">{entry.playCount} plays</span>
+        {minutes && <span class="lb-row__mins">{minutes}</span>}
+      </div>
+    )
+  }
   {
     showMovement && (
       <div class="lb-row__movement mono">
@@ -38,7 +51,8 @@ const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.r
       </div>
     )
   }
-</div>
+  {href && <span class="lb-row__chevron" aria-hidden="true">›</span>}
+</Wrapper>
 
 <style>
   .lb-row {
@@ -47,6 +61,20 @@ const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.r
     gap: 12px;
     padding: 10px 0;
     border-bottom: 1px solid var(--hairline);
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .lb-row--link {
+    cursor: pointer;
+    transition: background 0.12s ease;
+    border-radius: 10px;
+    padding: 10px 8px;
+    margin: 0 -8px;
+  }
+
+  .lb-row--link:hover {
+    background: var(--surface-raised);
   }
 
   .lb-row__rank {
@@ -105,8 +133,31 @@ const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.r
     white-space: nowrap;
   }
 
+  .lb-row__stats {
+    flex: 0 0 auto;
+    text-align: right;
+    line-height: 1.25;
+  }
+
+  .lb-row__plays {
+    display: block;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .lb-row__mins {
+    display: block;
+    font-size: 10.5px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
   .lb-row__movement {
     flex: 0 0 auto;
+    width: 34px;
+    text-align: right;
     font-size: 12.5px;
   }
 
@@ -128,5 +179,12 @@ const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.r
 
   .lb-row__delta--steady {
     color: var(--text-4);
+  }
+
+  .lb-row__chevron {
+    flex: 0 0 auto;
+    color: var(--text-4);
+    font-size: 18px;
+    margin-left: -4px;
   }
 </style>

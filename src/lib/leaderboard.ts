@@ -19,6 +19,7 @@ export interface LeaderboardEntry {
   subtitle: string | null;
   image: string | null;
   playCount: number | null; // always a number now (every window is computed from plays); kept null-tolerant for safety
+  totalMs: number | null; // minutes listened for this entry — sum(coalesce(ms_played, duration_ms, 0)); 0 until backfilled
   rank: number;
   prevRank: number | null; // null means NEW this period — no rank in the immediately-preceding window
 }
@@ -97,6 +98,7 @@ async function computedArtists(
     subtitle: null,
     image: (row.image as string) ?? null,
     playCount: row.play_count as number,
+    totalMs: (row.total_ms as number) ?? 0,
     rank: row.rank as number,
     prevRank: (row.prev_rank as number | null) ?? null,
   }));
@@ -108,6 +110,7 @@ async function computedTracks(
   range: DateRange,
   genre: string | null,
   limit: number,
+  artist: string | null = null,
 ): Promise<LeaderboardEntry[]> {
   const { data, error } = await supabase.rpc('leaderboard_top_tracks', {
     p_profile_id: profileId,
@@ -117,6 +120,7 @@ async function computedTracks(
     p_prev_until: range.prevUntil.toISOString(),
     p_genre: genre,
     p_limit: limit,
+    p_artist: artist,
   });
   if (error) throw error;
   return (data ?? []).map((row: Record<string, unknown>) => ({
@@ -125,6 +129,7 @@ async function computedTracks(
     subtitle: (row.artist_names as string[]).join(', '),
     image: (row.album_image as string) ?? null,
     playCount: row.play_count as number,
+    totalMs: (row.total_ms as number) ?? 0,
     rank: row.rank as number,
     prevRank: (row.prev_rank as number | null) ?? null,
   }));
@@ -151,6 +156,7 @@ async function computedGenres(
     subtitle: null,
     image: null,
     playCount: row.play_count as number,
+    totalMs: (row.total_ms as number) ?? 0,
     rank: row.rank as number,
     prevRank: (row.prev_rank as number | null) ?? null,
   }));
@@ -164,18 +170,20 @@ export interface GetLeaderboardParams {
   customSince?: Date;
   customUntil?: Date;
   genre?: string | null;
+  artist?: string | null; // drill-down: when set (with kind 'tracks'), restrict to one artist's tracks
   limit?: number;
 }
 
 export async function getLeaderboard(params: GetLeaderboardParams): Promise<LeaderboardResult> {
-  const { supabase, profileId, kind, window, customSince, customUntil, genre = null, limit = 10 } = params;
+  const { supabase, profileId, kind, window, customSince, customUntil, genre = null, artist = null, limit = 10 } =
+    params;
 
   const range = computedRange(window, window === 'custom' ? { since: customSince!, until: customUntil! } : undefined);
   const entries =
     kind === 'artists'
       ? await computedArtists(supabase, profileId, range, genre, limit)
       : kind === 'tracks'
-        ? await computedTracks(supabase, profileId, range, genre, limit)
+        ? await computedTracks(supabase, profileId, range, genre, limit, artist)
         : await computedGenres(supabase, profileId, range, limit);
   // Every window is computed; only `all` lacks a comparable prior period, so it's the one window
   // without movement indicators.

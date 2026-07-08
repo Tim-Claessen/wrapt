@@ -72,6 +72,11 @@ const activeWindow: LeaderboardWindow = WINDOWS.some((w) => w.value === windowPa
 
 const activeGenre = url.searchParams.get('genre');
 
+// Drill-down: ?artist=<name> shows that one artist's tracks (the tracks leaderboard, filtered to one
+// artist). It forces the tracks view regardless of which kind tab is selected.
+const drillArtist = url.searchParams.get('artist');
+const effectiveKind: LeaderboardKind = drillArtist ? 'tracks' : activeKind;
+
 const sinceParam = url.searchParams.get('since');
 const untilParam = url.searchParams.get('until');
 const customSince = activeWindow === 'custom' && sinceParam ? new Date(sinceParam) : undefined;
@@ -122,11 +127,12 @@ try {
     getLeaderboard({
       supabase: service,
       profileId: profile.id,
-      kind: activeKind,
+      kind: effectiveKind,
       window: queryWindow,
       customSince,
       customUntil,
       genre: activeGenre,
+      artist: drillArtist,
       limit: 10,
     }),
     getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil),
@@ -152,7 +158,16 @@ function buildHref(overrides: Record<string, string | null>): string {
   return query ? `${url.pathname}?${query}` : url.pathname;
 }
 
-const rowShape = activeKind === 'artists' ? 'circle' : 'square';
+const rowShape = effectiveKind === 'artists' ? 'circle' : 'square';
+
+// Per-row drill link: an artist row opens that artist's tracks; a genre row opens the artists in
+// that genre (with the genre filter applied). Track rows are leaves — no link.
+function rowHref(entry: (typeof entries)[number]): string | null {
+  if (drillArtist) return null;
+  if (effectiveKind === 'artists') return buildHref({ artist: entry.title, genre: null });
+  if (effectiveKind === 'genres') return buildHref({ kind: 'artists', genre: entry.title, artist: null });
+  return null;
+}
 
 const historyDaysAgo = historySince
   ? Math.max(1, Math.round((Date.now() - historySince.getTime()) / (24 * 60 * 60 * 1000)))
@@ -190,7 +205,7 @@ const heroStats = [
 ];
 
 const topEntry = entries[0] ?? null;
-const kindSingular = activeKind === 'artists' ? 'artist' : activeKind === 'tracks' ? 'track' : 'genre';
+const kindSingular = effectiveKind === 'artists' ? 'artist' : effectiveKind === 'tracks' ? 'track' : 'genre';
 const topMoveDelta =
   topEntry && hasMovement && topEntry.prevRank !== null ? topEntry.prevRank - topEntry.rank : null;
 
@@ -318,7 +333,7 @@ const trendPoints = trend.map((point) => ({
           {/* #1 + rankings */}
           <section class="rank-sec">
             {
-              topEntry && (
+              topEntry && !drillArtist && (
                 <div class="one">
                   <div
                     class:list={['one__art', { 'one__art--circle': rowShape === 'circle' }]}
@@ -332,7 +347,11 @@ const trendPoints = trend.map((point) => ({
                     <span class="one__badge mono">Your #1 {kindSingular}</span>
                     <div class="one__name">{topEntry.title}</div>
                     <div class="one__sub">
-                      {topEntry.playCount !== null && <span class="mono">{topEntry.playCount} plays</span>}
+                      {topEntry.playCount !== null && (
+                        <span class="mono">
+                          {topEntry.playCount} plays{topEntry.totalMs && topEntry.totalMs > 0 ? ` · ${formatMinutes(topEntry.totalMs)}` : ''}
+                        </span>
+                      )}
                       {topEntry.subtitle && <span class="one__by">{topEntry.subtitle}</span>}
                       {hasMovement && topEntry.prevRank === null && <span class="chip chip--new">NEW</span>}
                       {hasMovement && topMoveDelta !== null && topMoveDelta > 0 && (
@@ -347,24 +366,34 @@ const trendPoints = trend.map((point) => ({
               )
             }
 
-            <div class="rank-head">
-              <div class="rank-tabs mono">
-                {
-                  KINDS.map((k) => (
-                    <a
-                      href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
-                      class:list={['rank-tab', { 'is-active': k.value === activeKind }]}
-                    >
-                      {k.label}
-                    </a>
-                  ))
-                }
-              </div>
-              <span class="rank-sub mono">{hasMovement ? `vs. ${compareText}` : 'ranked by plays'}</span>
-            </div>
+            {
+              drillArtist ? (
+                <div class="drill-head">
+                  <a class="drill-back mono" href={buildHref({ artist: null })}>‹ Back</a>
+                  <span class="drill-title">
+                    Songs by <b>{drillArtist}</b>
+                  </span>
+                  <span class="rank-sub mono">{hasMovement ? `vs. ${compareText}` : 'ranked by plays'}</span>
+                </div>
+              ) : (
+                <div class="rank-head">
+                  <div class="rank-tabs mono">
+                    {KINDS.map((k) => (
+                      <a
+                        href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
+                        class:list={['rank-tab', { 'is-active': k.value === activeKind }]}
+                      >
+                        {k.label}
+                      </a>
+                    ))}
+                  </div>
+                  <span class="rank-sub mono">{hasMovement ? `vs. ${compareText}` : 'ranked by plays'}</span>
+                </div>
+              )
+            }
 
             {
-              availableGenres.length > 0 && (
+              !drillArtist && availableGenres.length > 0 && (
                 <div class="rank-slicer">
                   <GenreSlicer genres={availableGenres} active={activeGenre} buildHref={(genre) => buildHref({ genre })} />
                 </div>
@@ -374,9 +403,13 @@ const trendPoints = trend.map((point) => ({
             <div class="rank-rows">
               {
                 entries.length > 0 ? (
-                  entries.map((entry) => <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} />)
+                  entries.map((entry) => (
+                    <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} href={rowHref(entry)} />
+                  ))
                 ) : (
-                  <p class="empty-note">Nothing here yet for this window. Try a wider range.</p>
+                  <p class="empty-note">
+                    {drillArtist ? `No tracks for ${drillArtist} in this window.` : 'Nothing here yet for this window. Try a wider range.'}
+                  </p>
                 )
               }
             </div>
@@ -721,6 +754,40 @@ const trendPoints = trend.map((point) => ({
     font-size: 11px;
     color: var(--text-3);
     white-space: nowrap;
+  }
+
+  .drill-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--hairline);
+    padding-bottom: 9px;
+  }
+
+  .drill-back {
+    font-size: 12.5px;
+    color: var(--gold);
+    text-decoration: none;
+    flex: 0 0 auto;
+  }
+
+  .drill-back:hover {
+    text-decoration: underline;
+  }
+
+  .drill-title {
+    font-size: 14px;
+    color: var(--text-1);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drill-title b {
+    font-weight: 700;
   }
 
   .rank-slicer {
