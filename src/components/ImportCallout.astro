@@ -18,7 +18,7 @@ const { progress } = Astro.props;
     </a>
   ) : progress.pending > 0 ? (
     <a href="/import" class="import-callout import-callout--progress mono">
-      Matching artists… ({progress.done}/{progress.total})
+      Adding genres & art… ({progress.done}/{progress.total})
     </a>
   ) : (
     <a href="/import" class="import-callout import-callout--quiet mono">

@@ -12,6 +12,7 @@ export interface PlayRow {
   artist_names: string[];
   album_image: string | null;
   duration_ms: number | null; // null for imports until enrichment backfills the track's true duration
+  ms_played: number | null; // actual listened-time; known for imports (from the export), null for live (falls back to duration_ms)
   source: 'live' | 'import';
 }
 
@@ -25,6 +26,7 @@ function toPlayRow(profileId: string, item: SpotifyRecentlyPlayedItem): PlayRow 
     artist_names: item.track.artists.map((a) => a.name),
     album_image: item.track.album.images[0]?.url ?? null,
     duration_ms: item.track.duration_ms,
+    ms_played: null, // recently-played doesn't report actual listened-time; minutes fall back to duration_ms
     source: 'live',
   };
 }

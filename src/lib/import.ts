@@ -84,20 +84,23 @@ export async function ingestImportBatch(
     artist_names: [c.row.artistName],
     album_image: null,
     duration_ms: null,
+    ms_played: c.row.msPlayed, // real listened-time from the export → minutes are accurate immediately, no enrichment needed
     source: 'import',
   }));
 
-  const { data: inserted, error: insertError } = await supabase
-    .from('plays')
-    .upsert(playRows, { onConflict: 'profile_id,played_at', ignoreDuplicates: true })
-    .select('id');
+  // Insert new rows and, on re-upload, backfill only ms_played onto rows that already exist —
+  // without clobbering columns a later enrichment pass fills in (artist_ids/album_image/duration_ms).
+  // Returns the count of genuinely-new rows so the progress UI stays truthful on a re-run.
+  const { data: insertedCount, error: insertError } = await supabase.rpc('ingest_import_plays', {
+    p_rows: playRows,
+  });
   if (insertError) throw insertError;
 
   const distinctTrackIds = [...new Set(survivors.map((c) => c.trackId))];
   const { error: registerError } = await supabase.rpc('import_register_tracks', { p_track_ids: distinctTrackIds });
   if (registerError) throw registerError;
 
-  const imported = inserted?.length ?? 0;
+  const imported = Number(insertedCount ?? 0);
   return { received, imported, skipped: received - imported };
 }
 
