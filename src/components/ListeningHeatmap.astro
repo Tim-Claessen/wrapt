@@ -1,60 +1,49 @@
 ---
-// "When do you listen" — a magnitude-over-a-grid job, so sequential gold per dataviz's form table
-// (heatmap → sequential, one hue). Intensity is color-mix'd off var(--gold) rather than a
-// hardcoded hex so it stays themeable (CLAUDE.md: "--gold is themeable — read it everywhere").
+// "When you listen" — magnitude over a weekday x hour grid, so sequential gold (one hue), intensity
+// color-mix'd off var(--gold) so it stays themeable. The fix vs. the old version: cells are a
+// `repeat(24, 1fr)` grid with square (aspect-ratio) cells, so the whole week fits the container at
+// any width — no more 430px horizontal scroll on a phone.
 import { WEEKDAY_LABELS } from '../lib/format';
 
 interface Props {
-  grid: number[][]; // [weekday 0..6][hour 0..23]
+  grid: number[][]; // [weekday 0..6 (Sun..Sat, matching extract(dow))][hour 0..23]
   max: number;
 }
 const { grid, max } = Astro.props;
 
-const HOUR_TICKS: { hour: number; label: string }[] = [
-  { hour: 0, label: '12a' },
-  { hour: 3, label: '3a' },
-  { hour: 6, label: '6a' },
-  { hour: 9, label: '9a' },
-  { hour: 12, label: '12p' },
-  { hour: 15, label: '3p' },
-  { hour: 18, label: '6p' },
-  { hour: 21, label: '9p' },
-];
-
-const CELL = 16;
-const GAP = 2;
-const PITCH = CELL + GAP;
-const gridWidth = 24 * PITCH - GAP;
+const HOUR_TICKS = ['12a', '6a', '12p', '6p', '11p'];
 
 function intensityPct(count: number): number {
   if (count <= 0 || max <= 0) return 0;
-  return Math.round(15 + 75 * (count / max));
+  return Math.round(15 + 78 * (count / max));
 }
+
+function fmtHour(h: number): string {
+  const ap = h < 12 ? 'am' : 'pm';
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${ap}`;
+}
+
+// Peak cell for the direct caption — so the headline ("evenings are your window") is stated, not
+// left for the reader to hunt across 168 cells.
+let peak = { wd: 0, h: 0, c: 0 };
+grid.forEach((row, wd) => row.forEach((c, h) => { if (c > peak.c) peak = { wd, h, c }; }));
 ---
 
-<div class="heatmap">
-  <div class="heatmap__inner">
-    <div class="heatmap__axis" style={`width:${gridWidth}px;`}>
-      {
-        HOUR_TICKS.map((tick) => (
-          <span class="heatmap__axis-label mono" style={`left:${tick.hour * PITCH}px;`}>
-            {tick.label}
-          </span>
-        ))
-      }
-    </div>
+<div class="hm">
+  <div class="hm__rows">
     {
-      grid.map((row, weekday) => (
-        <div class="heatmap__row">
-          <span class="heatmap__row-label mono">{WEEKDAY_LABELS[weekday]}</span>
-          <div class="heatmap__cells">
-            {row.map((count, hour) => {
+      grid.map((row, wd) => (
+        <div class="hm__row">
+          <span class="hm__label mono">{WEEKDAY_LABELS[wd]}</span>
+          <div class="hm__cells">
+            {row.map((count, h) => {
               const pct = intensityPct(count);
               return (
                 <div
-                  class="heatmap__cell"
-                  style={pct > 0 ? `background:color-mix(in srgb, var(--gold) ${pct}%, transparent);` : ''}
-                  title={`${WEEKDAY_LABELS[weekday]} ${hour}:00 — ${count} ${count === 1 ? 'play' : 'plays'}`}
+                  class="hm__cell"
+                  style={pct > 0 ? `background:color-mix(in srgb, var(--gold) ${pct}%, transparent)` : ''}
+                  title={`${WEEKDAY_LABELS[wd]} ${h}:00 — ${count} ${count === 1 ? 'play' : 'plays'}`}
                 />
               );
             })}
@@ -63,62 +52,80 @@ function intensityPct(count: number): number {
       ))
     }
   </div>
+
+  <div class="hm__axis">
+    <span></span>
+    <div class="hm__ticks mono">
+      {HOUR_TICKS.map((t) => <span>{t}</span>)}
+    </div>
+  </div>
+
+  {
+    peak.c > 0 && (
+      <p class="hm__peak mono">
+        Peak: <b>{WEEKDAY_LABELS[peak.wd]}, {fmtHour(peak.h)}</b>
+      </p>
+    )
+  }
 </div>
 
 <style>
-  .heatmap {
-    overflow-x: auto;
-  }
-
-  .heatmap__inner {
-    display: inline-block;
-    min-width: 100%;
-  }
-
-  .heatmap__axis {
-    position: relative;
-    height: 16px;
-    margin-left: 32px;
-  }
-
-  .heatmap__axis-label {
-    position: absolute;
-    top: 0;
-    font-size: 8.5px;
-    color: var(--text-3);
-  }
-
-  .heatmap__row {
+  .hm__rows {
     display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .hm__row {
+    display: grid;
+    grid-template-columns: 30px 1fr;
     align-items: center;
-    gap: 0;
-    margin-top: 2px;
+    gap: 8px;
   }
 
-  .heatmap__row-label {
-    flex: 0 0 32px;
-    position: sticky;
-    left: 0;
-    font-size: 9px;
+  .hm__label {
+    font-size: 10px;
     color: var(--text-3);
-    background: var(--bg);
   }
 
-  .heatmap__cells {
-    display: flex;
+  .hm__cells {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
     gap: 2px;
   }
 
-  .heatmap__cell {
-    flex: 0 0 16px;
-    width: 16px;
-    height: 16px;
-    border-radius: 3px;
+  .hm__cell {
+    aspect-ratio: 1;
+    border-radius: 2.5px;
     background: var(--surface-raised);
     transition: transform 0.1s ease;
   }
 
-  .heatmap__cell:hover {
-    transform: scale(1.15);
+  .hm__cell:hover {
+    transform: scale(1.18);
+  }
+
+  .hm__axis {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 8px;
+    margin-top: 7px;
+  }
+
+  .hm__ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    color: var(--text-4);
+  }
+
+  .hm__peak {
+    margin: 12px 0 0;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  .hm__peak b {
+    color: var(--gold);
   }
 </style>

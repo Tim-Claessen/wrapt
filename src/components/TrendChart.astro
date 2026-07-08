@@ -1,128 +1,173 @@
 ---
-// "Listening over time" — trend job, bar form (dataviz choosing-a-form: trend over time → line/
-// area, but discrete buckets + needing a tappable per-bar tooltip on mobile favors bars here).
-// Single series, sequential gold, so no legend needed (marks-and-anatomy: "a single series needs
-// no legend box"). One direct label on the peak bar; every bar carries a native tooltip via
-// <title> so the exact value is always reachable, not just visible at the peak.
+// "Listening over time" — change-over-time, so an area+line (dataviz choosing-a-form). Single
+// series → sequential gold, no legend (the title names it). The fix vs. the old bar version: the
+// SVG only draws the area fill + a `non-scaling-stroke` line (so stretching it to any width never
+// distorts the stroke), while every marker, value and axis label lives in an HTML overlay pinned to
+// the same fixed pixel height — crisp at any width, and the peak + latest values are always visible,
+// not hover-only (phones don't hover). Per-point <title> gives desktop the full readout.
 interface Point {
   label: string;
   value: number;
 }
 interface Props {
   points: Point[];
-  unit: string; // e.g. "plays" — used in the tooltip text
+  unit: string;
   emptyLabel: string;
 }
 const { points, unit, emptyLabel } = Astro.props;
 
-const SLOT = 34;
-const BAR_W = 20;
-const CHART_H = 108;
-const BASELINE_Y = 108;
-const TOP_PAD = 22; // room for the peak-bar value label
-const AXIS_H = 18;
-const width = Math.max(points.length * SLOT, SLOT);
-const height = TOP_PAD + CHART_H + AXIS_H;
-
+const H = 150; // fixed px height shared by the SVG and the overlay so their coordinates line up
+const PAD_TOP = 16;
+const n = points.length;
 const max = Math.max(...points.map((p) => p.value), 1);
-const peakIndex = points.reduce((best, p, i) => (p.value > points[best].value ? i : best), 0);
 
-function roundedTopRectPath(x: number, y: number, w: number, h: number, r: number): string {
-  const rr = Math.min(r, h / 2, w / 2);
-  return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`;
-}
+const xPct = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
+const yPx = (v: number) => PAD_TOP + (1 - v / max) * (H - PAD_TOP);
 
-const bars = points.map((p, i) => {
-  const h = p.value <= 0 ? 0 : Math.max((p.value / max) * CHART_H, 3);
-  const x = i * SLOT + (SLOT - BAR_W) / 2;
-  const y = TOP_PAD + (BASELINE_Y - h);
-  return { ...p, x, y, w: BAR_W, h, isPeak: i === peakIndex && p.value > 0 };
-});
+const coords = points.map((p, i) => ({ ...p, x: xPct(i), y: yPx(p.value) }));
+const avg = n > 0 ? points.reduce((a, p) => a + p.value, 0) / n : 0;
+const avgY = yPx(avg);
+const peakIdx = points.reduce((best, p, i) => (p.value > points[best].value ? i : best), 0);
 
-// Sparse x-axis labels: first, ~middle, last — never one per bar (marks-and-anatomy: label selectively).
-const labelIndices = new Set(
-  points.length <= 1 ? [0] : [0, Math.round((points.length - 1) / 2), points.length - 1],
-);
+const linePath = coords.map((c, i) => `${i ? 'L' : 'M'}${c.x} ${c.y}`).join(' ');
+const areaPath = n > 0 ? `${linePath} L${xPct(n - 1)} ${H} L${xPct(0)} ${H} Z` : '';
+
+const hitW = 100 / Math.max(n - 1, 1);
+// Sparse x-axis labels: first, middle, last — never one per point.
+const labelIdx = new Set(n <= 1 ? [0] : [0, Math.round((n - 1) / 2), n - 1]);
 ---
 
 {
-  points.length === 0 || max === 0 ? (
-    <p class="mono trend-chart__empty">{emptyLabel}</p>
+  n === 0 || max === 0 ? (
+    <p class="tc__empty mono">{emptyLabel}</p>
   ) : (
-    <div class="trend-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" preserveAspectRatio="none" role="img" aria-label={`${unit} over time`}>
-        <line x1="0" y1={TOP_PAD + BASELINE_Y} x2={width} y2={TOP_PAD + BASELINE_Y} class="trend-chart__baseline" />
-        {bars.map((bar) => (
-          <g>
-            {bar.h > 0 && (
-              <path d={roundedTopRectPath(bar.x, bar.y, bar.w, bar.h, 4)} class="trend-chart__bar">
-                <title>
-                  {bar.label}: {bar.value} {unit}
-                </title>
-              </path>
-            )}
-            {bar.isPeak && (
-              <text x={bar.x + bar.w / 2} y={bar.y - 8} class="trend-chart__peak-label mono" text-anchor="middle">
-                {bar.value}
-              </text>
-            )}
-          </g>
+    <div class="tc">
+      <svg class="tc__svg" viewBox={`0 0 100 ${H}`} preserveAspectRatio="none" role="img" aria-label={`${unit} over time`}>
+        <defs>
+          <linearGradient id="tcFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--gold)" stop-opacity="0.4" />
+            <stop offset="100%" stop-color="var(--gold)" stop-opacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#tcFill)" />
+        <path
+          d={linePath}
+          fill="none"
+          stroke="var(--gold)"
+          stroke-width="2"
+          vector-effect="non-scaling-stroke"
+          stroke-linejoin="round"
+          stroke-linecap="round"
+        />
+        {coords.map((c) => (
+          <rect x={Math.max(c.x - hitW / 2, 0)} y="0" width={hitW} height={H} fill="transparent">
+            <title>{c.label}: {c.value} {unit}</title>
+          </rect>
         ))}
-        {points.map((p, i) =>
-          labelIndices.has(i) ? (
-            <text
-              x={i * SLOT + SLOT / 2}
-              y={TOP_PAD + BASELINE_Y + 14}
-              class="trend-chart__axis-label mono"
-              text-anchor="middle"
-            >
-              {p.label}
-            </text>
-          ) : null,
-        )}
       </svg>
+
+      <div class="tc__overlay" aria-hidden="true">
+        <div class="tc__avg" style={`top:${avgY}px`}>
+          <span class="tc__avg-tag mono">avg {Math.round(avg)}</span>
+        </div>
+        <span class="tc__dot" style={`left:${coords[peakIdx].x}%;top:${coords[peakIdx].y}px`} />
+        <span class="tc__val mono" style={`left:${coords[peakIdx].x}%;top:${coords[peakIdx].y}px`}>{points[peakIdx].value}</span>
+        {peakIdx !== n - 1 && (
+          <Fragment>
+            <span class="tc__dot" style={`left:${coords[n - 1].x}%;top:${coords[n - 1].y}px`} />
+            <span class="tc__val tc__val--end mono" style={`left:${coords[n - 1].x}%;top:${coords[n - 1].y}px`}>{points[n - 1].value}</span>
+          </Fragment>
+        )}
+      </div>
+
+      <div class="tc__axis mono">
+        {points.map((p, i) => (labelIdx.has(i) ? <span style={`left:${xPct(i)}%`}>{p.label}</span> : null))}
+      </div>
     </div>
   )
 }
 
 <style>
-  .trend-chart {
-    overflow-x: auto;
-    overflow-y: hidden;
+  .tc {
+    position: relative;
   }
 
-  .trend-chart svg {
+  .tc__svg {
     display: block;
-    min-width: 100%;
+    width: 100%;
+    height: 150px;
   }
 
-  .trend-chart__baseline {
-    stroke: var(--hairline);
-    stroke-width: 1;
+  .tc__overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 150px;
+    pointer-events: none;
   }
 
-  .trend-chart__bar {
-    fill: var(--gold);
-    opacity: 0.85;
-    transition: opacity 0.15s ease;
+  .tc__avg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px dashed var(--text-4);
   }
 
-  .trend-chart__bar:hover {
-    opacity: 1;
+  .tc__avg-tag {
+    position: absolute;
+    right: 0;
+    top: -13px;
+    font-size: 8.5px;
+    color: var(--text-3);
   }
 
-  .trend-chart__peak-label {
-    fill: var(--gold);
+  .tc__dot {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--gold);
+    border: 2px solid var(--surface);
+    transform: translate(-50%, -50%);
+  }
+
+  .tc__val {
+    position: absolute;
+    transform: translate(-50%, -150%);
     font-size: 10px;
     font-weight: 700;
+    color: var(--text-1);
+    white-space: nowrap;
   }
 
-  .trend-chart__axis-label {
-    fill: var(--text-3);
+  .tc__val--end {
+    color: var(--gold);
+  }
+
+  .tc__axis {
+    position: relative;
+    height: 14px;
+    margin-top: 5px;
+  }
+
+  .tc__axis span {
+    position: absolute;
+    transform: translateX(-50%);
     font-size: 8.5px;
+    color: var(--text-3);
+    white-space: nowrap;
   }
 
-  .trend-chart__empty {
+  .tc__axis span:first-child {
+    transform: translateX(0);
+  }
+
+  .tc__axis span:last-child {
+    transform: translateX(-100%);
+  }
+
+  .tc__empty {
     font-size: 12.5px;
     color: var(--text-3);
     padding: 20px 0;

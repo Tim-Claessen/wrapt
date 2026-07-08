@@ -1,44 +1,31 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getTopItems, type SpotifyArtist, type SpotifyTopTimeRange, type SpotifyTrack } from './spotify';
 
-// Native windows read straight from Spotify's own top endpoints — no rank-change data available
-// there without our own snapshot history, so they render without movement indicators.
-// Computed windows (7d/30d/custom/lifetime) are sliced from `plays`, which lets us diff against the
-// immediately-preceding equal-length window for real rank-change from day one. `lifetime` has no
-// meaningful "previous period" (see hasMovement below), but still benefits from imported history the
-// same way the other computed windows do.
-export type LeaderboardWindow = '7d' | '30d' | '4w' | '6m' | 'all' | 'custom' | 'lifetime';
+// Every window is computed from the `plays` log — there are no Spotify-native windows anymore. So
+// each window diffs against the immediately-preceding equal-length period for real rank-change
+// (NEW / ▲ / ▼) from day one, 6-month view included. `all` is the exception: "everything, ever"
+// has no comparable previous period, so it carries no movement (see hasMovement in getLeaderboard).
+export type LeaderboardWindow = '7d' | '30d' | '6m' | 'all' | 'custom';
 export type LeaderboardKind = 'artists' | 'tracks' | 'genres';
 
-const NATIVE_WINDOWS = new Set<LeaderboardWindow>(['4w', '6m', 'all']);
-const NATIVE_TIME_RANGE: Record<'4w' | '6m' | 'all', SpotifyTopTimeRange> = {
-  '4w': 'short_term',
-  '6m': 'medium_term',
-  all: 'long_term',
-};
-const COMPUTED_WINDOW_DAYS: Record<'7d' | '30d', number> = { '7d': 7, '30d': 30 };
-// Approximate day-spans mirroring Spotify's short/medium_term windows — used only to give the
-// dashboard's own stats (which read from `plays`, not the Spotify top endpoints) a comparable
-// "previous period" for native windows, which otherwise have no rank-change data at all.
-const NATIVE_WINDOW_DAYS: Record<'4w' | '6m', number> = { '4w': 28, '6m': 183 };
+const COMPUTED_WINDOW_DAYS: Record<'7d' | '30d' | '6m', number> = { '7d': 7, '30d': 30, '6m': 183 };
 
-// Safely before any real Spotify listening data (Spotify launched 2008) — used as `lifetime`'s
-// `since` so the query is just "everything," without needing a per-profile earliest-play lookup.
-const LIFETIME_START = new Date('2000-01-01T00:00:00Z');
+// Safely before any real Spotify listening data (Spotify launched 2008) — used as `all`'s `since`
+// so the query is just "everything," without needing a per-profile earliest-play lookup.
+const ALL_TIME_START = new Date('2000-01-01T00:00:00Z');
 
 export interface LeaderboardEntry {
   id: string;
   title: string;
   subtitle: string | null;
   image: string | null;
-  playCount: number | null; // null for native windows — Spotify's top endpoints don't expose counts
+  playCount: number | null; // always a number now (every window is computed from plays); kept null-tolerant for safety
   rank: number;
-  prevRank: number | null; // null under `computed: true` means NEW; meaningless under `computed: false`
+  prevRank: number | null; // null means NEW this period — no rank in the immediately-preceding window
 }
 
 export interface LeaderboardResult {
-  computed: boolean;
-  hasMovement: boolean; // false for native windows *and* lifetime (no meaningful "previous lifetime" to diff against)
+  computed: boolean; // always true now (no native windows left); retained so callers/tests don't churn
+  hasMovement: boolean; // false only for `all` — no comparable previous period to diff against
   entries: LeaderboardEntry[];
 }
 
@@ -49,25 +36,22 @@ export interface DateRange {
   prevUntil: Date;
 }
 
-function computedRange(
-  window: '7d' | '30d' | 'custom' | 'lifetime',
-  custom?: { since: Date; until: Date },
-): DateRange {
+function computedRange(window: LeaderboardWindow, custom?: { since: Date; until: Date }): DateRange {
   return resolveWindowRange(window, custom);
 }
 
-// Date range (plus an equal-length "previous period" for deltas) for *any* window, including the
-// native Spotify ones (4w/6m/all) — those have no rank-change data from Spotify's top endpoints,
-// but the dashboard's own stats read from `plays` directly, so they can still show a trend.
+// Date range (plus an equal-length "previous period" for deltas) for any window. Every window is
+// sliced from `plays`, so the previous period is always available except for `all`, which is
+// deliberately zero-width (nothing meaningful to diff "everything, ever" against).
 export function resolveWindowRange(
   window: LeaderboardWindow,
   custom?: { since: Date; until: Date },
 ): DateRange {
-  if (window === 'lifetime' || window === 'all') {
-    // Zero-width prior window — "previous lifetime" isn't meaningful. Callers that need to know
-    // whether a delta is meaningful check for this (see hasMovement / getListeningSummary).
+  if (window === 'all') {
+    // Zero-width prior window — "everything, ever" has no comparable previous period. Callers that
+    // need to know whether a delta is meaningful check for this (see hasMovement / getListeningSummary).
     const until = new Date();
-    return { since: LIFETIME_START, until, prevSince: LIFETIME_START, prevUntil: LIFETIME_START };
+    return { since: ALL_TIME_START, until, prevSince: ALL_TIME_START, prevUntil: ALL_TIME_START };
   }
   if (window === 'custom') {
     if (!custom) throw new Error('custom window requires since/until');
@@ -79,7 +63,7 @@ export function resolveWindowRange(
       prevUntil: custom.since,
     };
   }
-  const days = window === '4w' || window === '6m' ? NATIVE_WINDOW_DAYS[window] : COMPUTED_WINDOW_DAYS[window];
+  const days = COMPUTED_WINDOW_DAYS[window];
   const until = new Date();
   const since = new Date(until.getTime() - days * 24 * 60 * 60 * 1000);
   return {
@@ -172,42 +156,8 @@ async function computedGenres(
   }));
 }
 
-async function nativeTop(
-  accessToken: string,
-  kind: 'artists' | 'tracks',
-  window: '4w' | '6m' | 'all',
-  limit: number,
-): Promise<LeaderboardEntry[]> {
-  const { items } = await getTopItems(accessToken, kind, NATIVE_TIME_RANGE[window], limit);
-  return items.map((item, index) => {
-    if (kind === 'artists') {
-      const artist = item as SpotifyArtist;
-      return {
-        id: artist.id,
-        title: artist.name,
-        subtitle: null,
-        image: artist.images[0]?.url ?? null,
-        playCount: null,
-        rank: index + 1,
-        prevRank: null,
-      };
-    }
-    const track = item as SpotifyTrack;
-    return {
-      id: track.id,
-      title: track.name,
-      subtitle: track.artists.map((a) => a.name).join(', '),
-      image: track.album.images[0]?.url ?? null,
-      playCount: null,
-      rank: index + 1,
-      prevRank: null,
-    };
-  });
-}
-
 export interface GetLeaderboardParams {
   supabase: SupabaseClient; // service-role client — see leaderboard_* function grants
-  accessToken: string | null; // only required for native windows (4w/6m/all)
   profileId: string;
   kind: LeaderboardKind;
   window: LeaderboardWindow;
@@ -218,30 +168,18 @@ export interface GetLeaderboardParams {
 }
 
 export async function getLeaderboard(params: GetLeaderboardParams): Promise<LeaderboardResult> {
-  const { supabase, accessToken, profileId, kind, window, customSince, customUntil, genre = null, limit = 10 } =
-    params;
+  const { supabase, profileId, kind, window, customSince, customUntil, genre = null, limit = 10 } = params;
 
-  if (NATIVE_WINDOWS.has(window)) {
-    if (kind === 'genres') return { computed: false, hasMovement: false, entries: [] }; // no genre data from native top endpoints
-    if (!accessToken) return { computed: false, hasMovement: false, entries: [] };
-    return {
-      computed: false,
-      hasMovement: false,
-      entries: await nativeTop(accessToken, kind, window as '4w' | '6m' | 'all', limit),
-    };
-  }
-
-  const range = computedRange(
-    window as '7d' | '30d' | 'custom' | 'lifetime',
-    window === 'custom' ? { since: customSince!, until: customUntil! } : undefined,
-  );
+  const range = computedRange(window, window === 'custom' ? { since: customSince!, until: customUntil! } : undefined);
   const entries =
     kind === 'artists'
       ? await computedArtists(supabase, profileId, range, genre, limit)
       : kind === 'tracks'
         ? await computedTracks(supabase, profileId, range, genre, limit)
         : await computedGenres(supabase, profileId, range, limit);
-  return { computed: true, hasMovement: window !== 'lifetime', entries };
+  // Every window is computed; only `all` lacks a comparable prior period, so it's the one window
+  // without movement indicators.
+  return { computed: true, hasMovement: window !== 'all', entries };
 }
 
 // Available genre chips for the slicer, scoped to whatever window is currently selected.
@@ -252,11 +190,7 @@ export async function getAvailableGenres(
   customSince?: Date,
   customUntil?: Date,
 ): Promise<string[]> {
-  if (NATIVE_WINDOWS.has(window)) return [];
-  const range = computedRange(
-    window as '7d' | '30d' | 'custom' | 'lifetime',
-    window === 'custom' ? { since: customSince!, until: customUntil! } : undefined,
-  );
+  const range = computedRange(window, window === 'custom' ? { since: customSince!, until: customUntil! } : undefined);
   const { data, error } = await supabase.rpc('leaderboard_available_genres', {
     p_profile_id: profileId,
     p_since: range.since.toISOString(),

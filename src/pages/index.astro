@@ -4,16 +4,12 @@ import RangeToggle from '../components/RangeToggle.astro';
 import GenreSlicer from '../components/GenreSlicer.astro';
 import LeaderboardRow from '../components/LeaderboardRow.astro';
 import ImportCallout from '../components/ImportCallout.astro';
-import RecentlyPlayed from '../components/RecentlyPlayed.astro';
-import StatsRow from '../components/StatsRow.astro';
 import TrendChart from '../components/TrendChart.astro';
 import ListeningHeatmap from '../components/ListeningHeatmap.astro';
 import GenreMix from '../components/GenreMix.astro';
 import EmptyState from '../components/EmptyState.astro';
 import Skeleton from '../components/Skeleton.astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
-import { getValidSpotifyAccessToken } from '../lib/tokens';
-import { SpotifyTokenExpiredError } from '../lib/spotify';
 import {
   getAvailableGenres,
   getLeaderboard,
@@ -59,13 +55,10 @@ const KINDS: { value: LeaderboardKind; label: string }[] = [
 const WINDOWS: { value: LeaderboardWindow; label: string }[] = [
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
-  { value: '4w', label: '4 weeks' },
   { value: '6m', label: '6 months' },
   { value: 'all', label: 'All time' },
-  { value: 'lifetime', label: 'Lifetime' },
   { value: 'custom', label: 'Custom' },
 ];
-const NATIVE_WINDOWS = new Set<LeaderboardWindow>(['4w', '6m', 'all']);
 
 const kindParam = url.searchParams.get('kind');
 const activeKind: LeaderboardKind = KINDS.some((k) => k.value === kindParam)
@@ -75,10 +68,9 @@ const activeKind: LeaderboardKind = KINDS.some((k) => k.value === kindParam)
 const windowParam = url.searchParams.get('window');
 const activeWindow: LeaderboardWindow = WINDOWS.some((w) => w.value === windowParam)
   ? (windowParam as LeaderboardWindow)
-  : '7d';
-const isComputedWindow = !NATIVE_WINDOWS.has(activeWindow);
+  : '30d';
 
-const activeGenre = isComputedWindow ? url.searchParams.get('genre') : null;
+const activeGenre = url.searchParams.get('genre');
 
 const sinceParam = url.searchParams.get('since');
 const untilParam = url.searchParams.get('until');
@@ -91,8 +83,6 @@ const queryWindow: LeaderboardWindow = activeWindow === 'custom' && !hasCustomRa
 
 const service = createSupabaseServiceClient(env);
 
-// The dashboard's own stats (trend/heatmap/summary) read straight from `plays`, so — unlike the
-// ranked leaderboard below — they're available for every window, native ones included.
 const range = resolveWindowRange(
   queryWindow,
   queryWindow === 'custom' ? { since: customSince!, until: customUntil! } : undefined,
@@ -118,12 +108,6 @@ let genreMix: Awaited<ReturnType<typeof getTopGenresForRange>> = [];
 let loadError: string | null = null;
 
 try {
-  let accessToken: string | null = null;
-  if (!isComputedWindow) {
-    const tokenInfo = await getValidSpotifyAccessToken(user.id, env);
-    accessToken = tokenInfo?.accessToken ?? null;
-  }
-
   [
     { hasMovement, entries },
     availableGenres,
@@ -137,7 +121,6 @@ try {
   ] = await Promise.all([
     getLeaderboard({
       supabase: service,
-      accessToken,
       profileId: profile.id,
       kind: activeKind,
       window: queryWindow,
@@ -146,21 +129,16 @@ try {
       genre: activeGenre,
       limit: 10,
     }),
-    isComputedWindow
-      ? getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil)
-      : Promise.resolve<string[]>([]),
+    getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil),
     getPlaysHistorySince(service, profile.id),
     getImportProgress(service, profile.id),
-    getRecentPlays(service, profile.id, 8),
+    getRecentPlays(service, profile.id, 12),
     getListeningSummary(service, profile.id, range),
     getListeningTrend(service, profile.id, range, trendBucket),
     getListeningHeatmap(service, profile.id, range),
-    isComputedWindow ? getTopGenresForRange(service, profile.id, range, 6) : Promise.resolve([]),
+    getTopGenresForRange(service, profile.id, range, 6),
   ]);
-} catch (err) {
-  if (err instanceof SpotifyTokenExpiredError) {
-    return Astro.redirect('/connect?error=token_expired');
-  }
+} catch {
   loadError = 'Something went wrong loading your dashboard. Try refreshing.';
 }
 
@@ -182,28 +160,55 @@ const historyDaysAgo = historySince
 
 const activeWindowLabel = WINDOWS.find((w) => w.value === activeWindow)?.label ?? activeWindow;
 
-const kpis = [
-  {
-    label: 'Minutes listened',
-    value: formatMinutes(summary.current.totalMs),
-    delta: summary.previous ? computeDelta(summary.current.totalMs, summary.previous.totalMs) : null,
-  },
+// The whole hero reflects the selected window, so its comparison story does too: 'all' has no prior
+// period (see resolveWindowRange), every other window diffs against an equal-length prior period.
+const hasPrev = summary.previous !== null;
+const compareText =
+  activeWindow === 'custom' ? 'the previous period' : `the previous ${activeWindowLabel.toLowerCase()}`;
+const heroEyebrow =
+  activeWindow === 'all' ? 'All time' : activeWindow === 'custom' ? 'Custom range' : `Last ${activeWindowLabel.toLowerCase()}`;
+
+const rawMinutes = Math.round(summary.current.totalMs / 60000);
+
+const heroStats = [
   {
     label: 'Plays',
     value: formatCompactNumber(summary.current.totalPlays),
     delta: summary.previous ? computeDelta(summary.current.totalPlays, summary.previous.totalPlays) : null,
   },
   {
-    label: 'Different artists',
+    label: 'Artists',
     value: formatCompactNumber(summary.current.distinctArtists),
     delta: summary.previous ? computeDelta(summary.current.distinctArtists, summary.previous.distinctArtists) : null,
   },
   {
-    label: 'Active days',
-    value: String(summary.current.activeDays),
-    delta: summary.previous ? computeDelta(summary.current.activeDays, summary.previous.activeDays) : null,
+    label: 'Tracks',
+    value: formatCompactNumber(summary.current.distinctTracks),
+    delta: summary.previous ? computeDelta(summary.current.distinctTracks, summary.previous.distinctTracks) : null,
   },
+  { label: 'Active days', value: String(summary.current.activeDays), delta: null },
 ];
+
+const topEntry = entries[0] ?? null;
+const kindSingular = activeKind === 'artists' ? 'artist' : activeKind === 'tracks' ? 'track' : 'genre';
+const topMoveDelta =
+  topEntry && hasMovement && topEntry.prevRank !== null ? topEntry.prevRank - topEntry.rank : null;
+
+// Album-art mosaic behind the hero number — "your music, as image". Pooled from whatever art we
+// already fetched (leaderboard + recent plays), cycled to fill the band; gradient tiles stand in
+// for anything not yet enriched, so it degrades gracefully on a cold start.
+const TILE_GRADIENTS = [
+  'linear-gradient(145deg,#5b4a63,#241c2b)',
+  'linear-gradient(145deg,#3f5450,#141d1a)',
+  'linear-gradient(145deg,#63514a,#2a1f1a)',
+  'linear-gradient(145deg,#4a5566,#191f28)',
+  'linear-gradient(145deg,#665a45,#282116)',
+  'linear-gradient(145deg,#54486a,#201a2b)',
+];
+const imagePool = [...entries.map((e) => e.image), ...recentPlays.map((r) => r.albumImage)].filter(
+  (x): x is string => Boolean(x),
+);
+const mosaicTiles = Array.from({ length: 48 }, (_, i) => (imagePool.length ? imagePool[i % imagePool.length] : null));
 
 const trendPoints = trend.map((point) => ({
   label:
@@ -216,29 +221,12 @@ const trendPoints = trend.map((point) => ({
 
 <AppShell title="Dashboard" wide nav>
   <div id="dashboard-content">
-    <div style="max-width:560px;">
-      <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
-        Connected
-      </div>
-      <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">
-        Hey, {profile.display_name ?? 'there'}.
-      </div>
-      <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
-        Here's what's been on repeat.
-      </p>
-
-      <div style="margin-top:20px;">
-        <ImportCallout progress={importProgress} />
-      </div>
-
-      {
-        loadError && (
-          <p class="mono" style="margin-top:16px;font-size:12.5px;color:var(--down);">
-            {loadError}
-          </p>
-        )
-      }
+    <div class="dash-head">
+      <span class="eyebrow mono">Hey, {profile.display_name ?? 'there'}</span>
+      <div class="dash-callout"><ImportCallout progress={importProgress} /></div>
     </div>
+
+    {loadError && <p class="load-error mono">{loadError}</p>}
 
     {
       !loadError && historySince === null && (
@@ -253,16 +241,7 @@ const trendPoints = trend.map((point) => ({
     {
       !loadError && historySince !== null && (
         <Fragment>
-          {
-            recentPlays.length > 0 && (
-              <div style="margin-top:28px;">
-                <div style="font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:12px;">Recently played</div>
-                <RecentlyPlayed plays={recentPlays} />
-              </div>
-            )
-          }
-
-          <div style="margin-top:32px;">
+          <div class="dash-ranges">
             <RangeToggle
               options={WINDOWS}
               active={activeWindow}
@@ -284,91 +263,147 @@ const trendPoints = trend.map((point) => ({
             )
           }
 
+          {/* HERO — minutes as the headline, over an album mosaic */}
+          <section class="hero">
+            <div class="hero__mosaic" aria-hidden="true">
+              {mosaicTiles.map((src, i) =>
+                src ? (
+                  <div class="hero__tile" style={`background-image:url('${src}')`} />
+                ) : (
+                  <div class="hero__tile" style={`background:${TILE_GRADIENTS[i % TILE_GRADIENTS.length]}`} />
+                ),
+              )}
+            </div>
+            <div class="hero__scrim" aria-hidden="true" />
+            <div class="hero__body">
+              <div class="eyebrow mono">{heroEyebrow}</div>
+              <div class="hero__figure">
+                <div class="hero__minutes mono">{rawMinutes.toLocaleString()}</div>
+                <div class="hero__unit">
+                  minutes listened
+                  <br />
+                  <b>{formatMinutes(summary.current.totalMs)}</b>
+                </div>
+              </div>
+
+              <div class="hero__stats">
+                {heroStats.map((s) => (
+                  <div class="ministat">
+                    <span class="ministat__v mono">{s.value}</span>
+                    <span class="ministat__l mono">{s.label}</span>
+                    {s.delta && s.delta.direction !== 'flat' && (
+                      <span class:list={['ministat__d', 'mono', s.delta.direction === 'up' ? 'up' : 'down']}>
+                        {s.delta.direction === 'up' ? '▲' : '▼'}
+                        {s.delta.percent === null ? ' new' : ` ${s.delta.percent}%`}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div class="hero__compare mono">
+                {hasPrev ? `▲ ▼ change vs. ${compareText}` : 'All of your listening — no prior period to compare.'}
+              </div>
+            </div>
+          </section>
+
           {
-            isComputedWindow && historySince !== null && (
-              <p class="mono" style="margin-top:14px;font-size:11.5px;color:var(--text-3);">
-                {historyDaysAgo !== null && historyDaysAgo < 7
-                  ? `History since ${historyDaysAgo === 1 ? 'yesterday' : `${historyDaysAgo} days ago`} — the chart fills in as we go.`
-                  : `History since ${historySince.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}.`}
+            historyDaysAgo !== null && historyDaysAgo < 7 && (
+              <p class="history-note mono">
+                History since {historyDaysAgo === 1 ? 'yesterday' : `${historyDaysAgo} days ago`} — it fills in as we go.
               </p>
             )
           }
 
-          <div class="dashboard-grid" style="margin-top:28px;">
-            <div class="dashboard-grid__main">
-              <div style="font-size:16px;font-weight:600;color:var(--text-1);margin-bottom:12px;">
-                Your listening <span class="mono" style="font-size:11px;color:var(--text-3);font-weight:400;">· {activeWindowLabel}</span>
-              </div>
-              <StatsRow items={kpis} />
-
-              <div style="margin-top:28px;">
-                <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:10px;">Listening over time</div>
-                <TrendChart points={trendPoints} unit="plays" emptyLabel="Nothing in this window yet." />
-              </div>
-
-              <div style="margin-top:28px;">
-                <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:10px;">When you listen</div>
-                <ListeningHeatmap grid={heatmap.grid} max={heatmap.max} />
-              </div>
-            </div>
-
+          {/* #1 + rankings */}
+          <section class="rank-sec">
             {
-              isComputedWindow && genreMix.length > 0 && (
-                <div class="dashboard-grid__side">
-                  <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:14px;">Genre mix</div>
-                  <GenreMix genres={genreMix} />
-                </div>
-              )
-            }
-          </div>
-
-          <div style="margin-top:36px;">
-            <div class="mono" style="display:flex;gap:16px;font-size:12.5px;letter-spacing:0.3px;">
-              {
-                KINDS.map((k) => (
-                  <a
-                    href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
-                    style={`text-decoration:none;padding-bottom:6px;border-bottom:2px solid ${k.value === activeKind ? 'var(--gold)' : 'transparent'};color:${k.value === activeKind ? 'var(--text-1)' : 'var(--text-3)'};font-weight:${k.value === activeKind ? '700' : '400'};`}
-                  >
-                    {k.label}
-                  </a>
-                ))
-              }
-            </div>
-
-            {
-              isComputedWindow && availableGenres.length > 0 && (
-                <div style="margin-top:14px;">
-                  <GenreSlicer
-                    genres={availableGenres}
-                    active={activeGenre}
-                    buildHref={(genre) => buildHref({ genre })}
+              topEntry && (
+                <div class="one">
+                  <div
+                    class:list={['one__art', { 'one__art--circle': rowShape === 'circle' }]}
+                    style={
+                      topEntry.image
+                        ? `background-image:url('${topEntry.image}')`
+                        : `background:${TILE_GRADIENTS[0]}`
+                    }
                   />
+                  <div class="one__meta">
+                    <span class="one__badge mono">Your #1 {kindSingular}</span>
+                    <div class="one__name">{topEntry.title}</div>
+                    <div class="one__sub">
+                      {topEntry.playCount !== null && <span class="mono">{topEntry.playCount} plays</span>}
+                      {topEntry.subtitle && <span class="one__by">{topEntry.subtitle}</span>}
+                      {hasMovement && topEntry.prevRank === null && <span class="chip chip--new">NEW</span>}
+                      {hasMovement && topMoveDelta !== null && topMoveDelta > 0 && (
+                        <span class="chip chip--up">▲ {topMoveDelta}</span>
+                      )}
+                      {hasMovement && topMoveDelta !== null && topMoveDelta < 0 && (
+                        <span class="chip chip--down">▼ {Math.abs(topMoveDelta)}</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )
             }
+
+            <div class="rank-head">
+              <div class="rank-tabs mono">
+                {
+                  KINDS.map((k) => (
+                    <a
+                      href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
+                      class:list={['rank-tab', { 'is-active': k.value === activeKind }]}
+                    >
+                      {k.label}
+                    </a>
+                  ))
+                }
+              </div>
+              <span class="rank-sub mono">{hasMovement ? `vs. ${compareText}` : 'ranked by plays'}</span>
+            </div>
 
             {
-              entries.length > 0 && !hasMovement && (
-                <div class="no-movement-badge mono">
-                  <span class="no-movement-badge__glyph">▲</span>
-                  No ranking history for this range yet — try 7 days, 30 days, or a custom range to see climbers and fallers.
+              availableGenres.length > 0 && (
+                <div class="rank-slicer">
+                  <GenreSlicer genres={availableGenres} active={activeGenre} buildHref={(genre) => buildHref({ genre })} />
                 </div>
               )
             }
 
-            <div style="margin-top:14px;">
+            <div class="rank-rows">
               {
                 entries.length > 0 ? (
                   entries.map((entry) => <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} />)
                 ) : (
-                  <p style="margin-top:20px;font-size:14px;color:var(--text-2);line-height:1.5;">
-                    Nothing here yet for this window. Try a wider range.
-                  </p>
+                  <p class="empty-note">Nothing here yet for this window. Try a wider range.</p>
                 )
               }
             </div>
-          </div>
+          </section>
+
+          {/* charts */}
+          <section class="panels">
+            <div class="panel">
+              <div class="panel__title">Listening over time</div>
+              <TrendChart points={trendPoints} unit="plays" emptyLabel="Nothing in this window yet." />
+            </div>
+            <div class="panel">
+              <div class="panel__title">When you listen</div>
+              <ListeningHeatmap grid={heatmap.grid} max={heatmap.max} />
+            </div>
+          </section>
+
+          {
+            genreMix.length > 0 && (
+              <section class="genre-sec">
+                <div class="panel">
+                  <div class="panel__title">Genre mix</div>
+                  <GenreMix genres={genreMix} />
+                </div>
+              </section>
+            )
+          }
         </Fragment>
       )
     }
@@ -395,10 +430,342 @@ const trendPoints = trend.map((point) => ({
 </script>
 
 <style>
-  .dashboard-grid__side {
-    margin-top: 32px;
+  .dash-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
   }
 
+  .dash-callout {
+    flex: 1 1 240px;
+    max-width: 340px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .up {
+    color: var(--up);
+  }
+  .down {
+    color: var(--down);
+  }
+
+  .load-error {
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--down);
+  }
+
+  .dash-ranges {
+    margin-top: 22px;
+  }
+
+  .history-note {
+    margin-top: 12px;
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+
+  /* ---- hero ---- */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    border: 1px solid var(--hairline);
+    margin-top: 20px;
+  }
+
+  .hero__mosaic {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    grid-auto-rows: 72px;
+    opacity: 0.26;
+    filter: saturate(0.75);
+    z-index: 0;
+  }
+
+  .hero__tile {
+    background-size: cover;
+    background-position: center;
+  }
+
+  .hero__scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background:
+      linear-gradient(180deg, rgba(8, 8, 10, 0.62), rgba(8, 8, 10, 0.82) 55%, rgba(8, 8, 10, 0.97)),
+      radial-gradient(90% 120% at 12% 0%, rgba(208, 162, 78, 0.16), transparent 60%);
+  }
+
+  .hero__body {
+    position: relative;
+    z-index: 2;
+    padding: 24px 22px 26px;
+  }
+
+  .hero__figure {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+
+  .hero__minutes {
+    font-size: clamp(52px, 15vw, 104px);
+    font-weight: 700;
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hero__unit {
+    font-size: 14px;
+    color: var(--text-2);
+    padding-bottom: 8px;
+    line-height: 1.4;
+  }
+
+  .hero__unit b {
+    color: var(--gold);
+    font-weight: 700;
+  }
+
+  .hero__stats {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 22px;
+  }
+
+  .ministat {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .ministat__v {
+    font-size: 21px;
+    font-weight: 700;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ministat__l {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .ministat__d {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .hero__compare {
+    margin-top: 18px;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    color: var(--text-3);
+  }
+
+  /* ---- #1 card ---- */
+  .rank-sec {
+    margin-top: 34px;
+  }
+
+  .one {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(120deg, rgba(208, 162, 78, 0.1), rgba(255, 255, 255, 0.02) 55%);
+    border: 1px solid rgba(208, 162, 78, 0.25);
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 26px;
+  }
+
+  .one__art {
+    width: 88px;
+    height: 88px;
+    border-radius: 12px;
+    flex: 0 0 auto;
+    background-size: cover;
+    background-position: center;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .one__art--circle {
+    border-radius: 50%;
+  }
+
+  .one__meta {
+    min-width: 0;
+  }
+
+  .one__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  .one__badge::before {
+    content: '★';
+    font-size: 11px;
+  }
+
+  .one__name {
+    font-size: clamp(20px, 5.5vw, 28px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 5px 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .one__sub {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+
+  .one__by {
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  .chip--up {
+    color: var(--up);
+    background: rgba(139, 185, 150, 0.12);
+  }
+
+  .chip--down {
+    color: var(--down);
+    background: rgba(217, 154, 154, 0.12);
+  }
+
+  .chip--new {
+    color: var(--gold-on);
+    background: var(--gold);
+  }
+
+  /* ---- rankings ---- */
+  .rank-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .rank-tabs {
+    display: flex;
+    gap: 18px;
+  }
+
+  .rank-tab {
+    padding-bottom: 9px;
+    text-decoration: none;
+    color: var(--text-3);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-size: 13px;
+    transition: color 0.15s ease;
+  }
+
+  .rank-tab:hover {
+    color: var(--text-2);
+  }
+
+  .rank-tab.is-active {
+    color: var(--text-1);
+    font-weight: 700;
+    border-bottom-color: var(--gold);
+  }
+
+  .rank-sub {
+    font-size: 11px;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  .rank-slicer {
+    margin-top: 14px;
+  }
+
+  .rank-rows {
+    margin-top: 12px;
+  }
+
+  .empty-note {
+    margin-top: 20px;
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  /* ---- panels ---- */
+  .panels {
+    margin-top: 30px;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    padding: 18px;
+    min-width: 0;
+  }
+
+  .panel__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 12px;
+  }
+
+  .genre-sec {
+    margin-top: 16px;
+  }
+
+  /* ---- forms ---- */
   .custom-range-form {
     margin-top: 12px;
     display: flex;
@@ -432,39 +799,9 @@ const trendPoints = trend.map((point) => ({
     cursor: pointer;
   }
 
-  .no-movement-badge {
-    margin-top: 14px;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px 14px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-2);
-    border: 1px dashed rgba(208, 162, 78, 0.5);
-    border-radius: 13px;
-  }
-
-  .no-movement-badge__glyph {
-    color: var(--gold);
-    font-size: 13px;
-    flex: 0 0 auto;
-  }
-
-  @media (min-width: 900px) {
-    .dashboard-grid {
-      display: grid;
-      grid-template-columns: 1fr 280px;
-      gap: 40px;
-      align-items: start;
-    }
-
-    .dashboard-grid__side {
-      margin-top: 0;
-      background: var(--surface-raised);
-      border: 1px solid var(--hairline);
-      border-radius: 14px;
-      padding: 18px 20px;
+  @media (min-width: 760px) {
+    .panels {
+      grid-template-columns: 1.4fr 1fr;
     }
   }
 </style>
