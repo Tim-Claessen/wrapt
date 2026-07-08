@@ -3,7 +3,7 @@ import { getArtist, getRecentlyPlayed, type SpotifyRecentlyPlayedItem } from './
 
 const ARTIST_CACHE_STALE_DAYS = 30;
 
-interface PlayRow {
+export interface PlayRow {
   profile_id: string;
   played_at: string;
   track_id: string;
@@ -11,7 +11,7 @@ interface PlayRow {
   artist_ids: string[];
   artist_names: string[];
   album_image: string | null;
-  duration_ms: number;
+  duration_ms: number | null; // null for imports until enrichment backfills the track's true duration
   source: 'live' | 'import';
 }
 

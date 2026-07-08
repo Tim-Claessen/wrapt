@@ -180,3 +180,23 @@ export async function getArtist(accessToken: string, artistId: string): Promise<
   }
   return response.json();
 }
+
+export class SpotifyTrackNotFoundError extends Error {
+  constructor(public trackId: string) {
+    super(`Spotify track ${trackId} not found`);
+    this.name = 'SpotifyTrackNotFoundError';
+  }
+}
+
+// No batch track endpoint (C6) — one request per track, used to backfill artist ids/album art/true
+// duration for imported history rows (the streaming-history export has none of those). A 404 means
+// the track is gone/region-locked, not a transient failure, so the caller should stop retrying it
+// rather than leaving it pending forever.
+export async function getTrack(accessToken: string, trackId: string): Promise<SpotifyTrack> {
+  const response = await authGet(`/tracks/${trackId}`, accessToken);
+  if (response.status === 404) throw new SpotifyTrackNotFoundError(trackId);
+  if (!response.ok) {
+    throw new Error(`Spotify track request failed: ${response.status} ${await response.text()}`);
+  }
+  return response.json();
+}

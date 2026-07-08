@@ -6,7 +6,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceClient } from '../../../src/lib/supabase';
 import { getValidSpotifyAccessToken } from '../../../src/lib/tokens';
 import { syncArtistGenres, syncRecentlyPlayed } from '../../../src/lib/plays';
+import { drainGlobalEnrichmentBacklog } from '../../../src/lib/import';
 import { SpotifyRateLimitError } from '../../../src/lib/spotify';
+
+// Larger than the /import page's own foreground tick (25) since this runs unattended and can
+// afford to spend more of the cron's own time budget per cycle.
+const ENRICHMENT_DRAIN_BATCH_SIZE = 200;
 
 export type SyncEnv = {
   SPOTIFY_CLIENT_ID: string;
@@ -21,9 +26,11 @@ interface SyncProfile {
   plays_cursor_after_ms: number | null;
 }
 
-async function syncProfile(supabase: SupabaseClient, env: SyncEnv, profile: SyncProfile): Promise<void> {
+// Returns the access token on success so the caller can reuse it for the (non-user-specific) import
+// enrichment drain step below, without fetching a token a second time.
+async function syncProfile(supabase: SupabaseClient, env: SyncEnv, profile: SyncProfile): Promise<string | null> {
   const tokenInfo = await getValidSpotifyAccessToken(profile.user_id, env);
-  if (!tokenInfo) return; // every spotify_profiles row implies a connected account; defensive only
+  if (!tokenInfo) return null; // every spotify_profiles row implies a connected account; defensive only
 
   const result = await syncRecentlyPlayed(
     supabase,
@@ -31,7 +38,7 @@ async function syncProfile(supabase: SupabaseClient, env: SyncEnv, profile: Sync
     profile.id,
     profile.plays_cursor_after_ms,
   );
-  if (result.fetched === 0) return;
+  if (result.fetched === 0) return tokenInfo.accessToken;
 
   await syncArtistGenres(supabase, tokenInfo.accessToken, result.artistIds);
 
@@ -42,6 +49,8 @@ async function syncProfile(supabase: SupabaseClient, env: SyncEnv, profile: Sync
       .eq('id', profile.id);
     if (error) throw error;
   }
+
+  return tokenInfo.accessToken;
 }
 
 async function runSync(env: SyncEnv): Promise<void> {
@@ -52,9 +61,11 @@ async function runSync(env: SyncEnv): Promise<void> {
   if (error) throw error;
 
   console.log(`[sync] found ${profiles?.length ?? 0} profile(s)`);
+  let lastAccessToken: string | null = null;
   for (const profile of profiles ?? []) {
     try {
-      await syncProfile(supabase, env, profile);
+      const accessToken = await syncProfile(supabase, env, profile);
+      if (accessToken) lastAccessToken = accessToken;
     } catch (err) {
       if (err instanceof SpotifyRateLimitError) {
         console.warn(
@@ -64,6 +75,25 @@ async function runSync(env: SyncEnv): Promise<void> {
       }
       console.error(`[sync] profile ${profile.id} failed:`, err);
     }
+  }
+
+  // Track lookups are public catalog data, not user-specific — any profile's token works for
+  // resolving anyone's import-enrichment backlog, same reasoning as the shared artists_cache.
+  if (!lastAccessToken) {
+    console.log('[sync] import enrichment: no usable access token this cycle, skipping');
+    return;
+  }
+  try {
+    const result = await drainGlobalEnrichmentBacklog(supabase, lastAccessToken, ENRICHMENT_DRAIN_BATCH_SIZE);
+    console.log(
+      `[sync] import enrichment: resolved ${result.resolved}, failed ${result.failed}${result.rateLimited ? ' (rate limited)' : ''}`,
+    );
+  } catch (err) {
+    if (err instanceof SpotifyRateLimitError) {
+      console.warn(`[sync] import enrichment rate limited this cycle (retry after ${err.retryAfterSeconds}s)`);
+      return;
+    }
+    console.error('[sync] import enrichment drain failed:', err);
   }
 }
 

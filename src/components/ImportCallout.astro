@@ -1,0 +1,61 @@
+---
+// Entry point for the self-serve history import — three states depending on where the profile's
+// import/enrichment stands. Not in SPEC.md yet (this feature predates a design pass); kept in the
+// established inline-style + scoped-style-block convention rather than inventing a new pattern.
+import type { ImportProgress } from '../lib/import';
+
+interface Props {
+  progress: ImportProgress;
+}
+const { progress } = Astro.props;
+---
+
+{
+  progress.total === 0 ? (
+    <a href="/import" class="import-callout import-callout--cta mono">
+      <span>Import your history — add years of past listening</span>
+      <span class="import-callout__arrow">→</span>
+    </a>
+  ) : progress.pending > 0 ? (
+    <a href="/import" class="import-callout import-callout--progress mono">
+      Matching artists… ({progress.done}/{progress.total})
+    </a>
+  ) : (
+    <a href="/import" class="import-callout import-callout--quiet mono">
+      Import more history
+    </a>
+  )
+}
+
+<style>
+  .import-callout {
+    display: block;
+    text-decoration: none;
+    font-size: 12.5px;
+  }
+
+  .import-callout--cta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+    padding: 13px 15px;
+    color: var(--text-1);
+    font-weight: 600;
+  }
+
+  .import-callout__arrow {
+    color: var(--gold);
+  }
+
+  .import-callout--progress {
+    color: var(--text-3);
+  }
+
+  .import-callout--quiet {
+    color: var(--text-3);
+  }
+</style>

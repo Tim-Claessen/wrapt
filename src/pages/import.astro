@@ -1,0 +1,257 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
+import { getImportProgress } from '../lib/import';
+
+const env = Astro.locals.runtime.env;
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
+const {
+  data: { user },
+} = await supabase.auth.getUser();
+
+if (!user) return Astro.redirect('/login');
+
+const service = createSupabaseServiceClient(env);
+const { data: profile } = await service
+  .from('spotify_profiles')
+  .select('id')
+  .eq('user_id', user.id)
+  .maybeSingle();
+
+if (!profile) return Astro.redirect('/connect');
+
+const progress = await getImportProgress(service, profile.id);
+const enrichPct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+---
+
+<AppShell title="Import history">
+  <div class="mono" style="font-size:11px;letter-spacing:1px;color:var(--text-3);text-transform:uppercase;">
+    Import
+  </div>
+  <div style="margin-top:8px;font-size:24px;font-weight:600;color:var(--text-1);">Bring in your history.</div>
+  <p style="margin-top:12px;font-size:15px;color:var(--text-2);line-height:1.5;">
+    Upload the data Spotify sends you ("Extended Streaming History") and every view instantly gains years of depth.
+  </p>
+
+  <div style="margin-top:24px;">
+    <label
+      for="import-file-input"
+      style="display:block;text-align:center;background:var(--gold);border-radius:14px;padding:16px;font-size:15px;font-weight:600;color:var(--gold-on);cursor:pointer;"
+    >
+      {progress.total > 0 ? 'Import more files' : 'Choose ZIP or JSON files'}
+    </label>
+    <input id="import-file-input" type="file" multiple accept=".zip,.json" style="display:none;" />
+    <p class="mono" style="margin-top:10px;font-size:11.5px;color:var(--text-3);text-align:center;">
+      Accepts the .zip Spotify emails you, or the Streaming_History_Audio_*.json files inside it.
+    </p>
+  </div>
+
+  <div id="upload-progress" style="margin-top:24px;display:none;">
+    <p id="upload-progress-text" class="mono" style="font-size:12.5px;color:var(--text-2);">&nbsp;</p>
+    <div style="margin-top:8px;height:6px;border-radius:4px;background:var(--surface-raised);overflow:hidden;">
+      <div id="upload-progress-bar" style="height:100%;width:0%;background:var(--gold);transition:width .3s;"></div>
+    </div>
+  </div>
+
+  <div id="enrich-progress" data-initial-pending={progress.pending} style={`margin-top:24px;${progress.total > 0 ? '' : 'display:none;'}`}>
+    <p id="enrich-progress-text" class="mono" style="font-size:12.5px;color:var(--text-2);">
+      {
+        progress.pending > 0
+          ? `Matching artists — ${progress.done} of ${progress.total}`
+          : `All matched — ${progress.total} of ${progress.total} tracks resolved.`
+      }
+    </p>
+    <div style="margin-top:8px;height:6px;border-radius:4px;background:var(--surface-raised);overflow:hidden;">
+      <div id="enrich-progress-bar" style={`height:100%;width:${enrichPct}%;background:var(--gold);transition:width .3s;`}></div>
+    </div>
+    <p class="mono" style="margin-top:8px;font-size:11.5px;color:var(--text-3);">
+      You can close this tab — matching continues automatically in the background over the next few hours.
+    </p>
+  </div>
+
+  <p id="import-error" class="mono" style="margin-top:16px;font-size:12.5px;color:var(--down);display:none;"></p>
+
+  <script>
+    import { unzip } from 'fflate';
+    import type { RawImportEntry } from '../lib/import';
+
+    const AUDIO_FILE_PATTERN = /^Streaming_History_Audio_.*\.json$/i;
+    const BATCH_SIZE = 1000;
+
+    const fileInput = document.getElementById('import-file-input') as HTMLInputElement;
+    const uploadProgress = document.getElementById('upload-progress') as HTMLDivElement;
+    const uploadProgressText = document.getElementById('upload-progress-text') as HTMLParagraphElement;
+    const uploadProgressBar = document.getElementById('upload-progress-bar') as HTMLDivElement;
+    const enrichProgress = document.getElementById('enrich-progress') as HTMLDivElement;
+    const enrichProgressText = document.getElementById('enrich-progress-text') as HTMLParagraphElement;
+    const enrichProgressBar = document.getElementById('enrich-progress-bar') as HTMLDivElement;
+    const errorEl = document.getElementById('import-error') as HTMLParagraphElement;
+
+    function sleep(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function showError(message: string): void {
+      errorEl.textContent = message;
+      errorEl.style.display = 'block';
+    }
+
+    function unzipAsync(data: Uint8Array): Promise<Record<string, Uint8Array>> {
+      return new Promise((resolve, reject) => {
+        unzip(data, (err, unzipped) => (err ? reject(err) : resolve(unzipped)));
+      });
+    }
+
+    async function postBatch(rows: RawImportEntry[]): Promise<{ received: number; imported: number; skipped: number }> {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const response = await fetch('/api/import/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows }),
+          });
+          if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+          return await response.json();
+        } catch (err) {
+          if (attempt >= 2) throw err;
+          await sleep(1000 * (attempt + 1));
+        }
+      }
+    }
+
+    // Re-filters exactly like src/lib/import.ts does server-side — this is just to avoid uploading
+    // rows we already know will be rejected, not the source of truth for what actually gets ingested.
+    function toRawEntry(raw: Record<string, unknown>): RawImportEntry | null {
+      const trackUri = raw.spotify_track_uri;
+      const msPlayed = raw.ms_played;
+      if (
+        typeof trackUri !== 'string' ||
+        !trackUri.startsWith('spotify:track:') ||
+        raw.episode_name != null ||
+        raw.audiobook_uri != null ||
+        typeof msPlayed !== 'number' ||
+        msPlayed < 30000
+      ) {
+        return null;
+      }
+      return {
+        ts: raw.ts as string,
+        msPlayed,
+        trackUri,
+        trackName: raw.master_metadata_track_name as string,
+        artistName: raw.master_metadata_album_artist_name as string,
+        albumName: (raw.master_metadata_album_album_name as string | null) ?? null,
+      };
+    }
+
+    let totalImported = 0;
+    let skippedFileCount = 0;
+
+    async function processJsonText(text: string): Promise<void> {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) return;
+
+      const entries: RawImportEntry[] = [];
+      for (const raw of parsed as Record<string, unknown>[]) {
+        const entry = toRawEntry(raw);
+        if (entry) entries.push(entry);
+      }
+
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        const batch = entries.slice(i, i + BATCH_SIZE);
+        const result = await postBatch(batch);
+        totalImported += result.imported;
+        uploadProgressText.textContent = `${totalImported} plays imported so far…`;
+      }
+    }
+
+    async function handleFiles(files: FileList): Promise<void> {
+      uploadProgress.style.display = 'block';
+      errorEl.style.display = 'none';
+      const fileArray = Array.from(files);
+
+      for (let fileIndex = 0; fileIndex < fileArray.length; fileIndex++) {
+        const file = fileArray[fileIndex];
+        uploadProgressText.textContent = `Processing file ${fileIndex + 1} of ${fileArray.length}…`;
+        uploadProgressBar.style.width = `${Math.round((fileIndex / fileArray.length) * 100)}%`;
+
+        try {
+          if (file.name.toLowerCase().endsWith('.zip')) {
+            const buffer = new Uint8Array(await file.arrayBuffer());
+            const unzipped = await unzipAsync(buffer);
+            for (const [path, bytes] of Object.entries(unzipped)) {
+              const basename = path.split('/').pop() ?? path;
+              if (!AUDIO_FILE_PATTERN.test(basename)) {
+                skippedFileCount++;
+                continue;
+              }
+              await processJsonText(new TextDecoder().decode(bytes));
+            }
+          } else if (AUDIO_FILE_PATTERN.test(file.name)) {
+            await processJsonText(await file.text());
+          } else {
+            skippedFileCount++;
+          }
+        } catch (err) {
+          showError(`Couldn't process ${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        uploadProgressBar.style.width = `${Math.round(((fileIndex + 1) / fileArray.length) * 100)}%`;
+      }
+
+      uploadProgressText.textContent =
+        skippedFileCount > 0
+          ? `Done — ${totalImported} plays imported (${skippedFileCount} non-audio file(s) skipped).`
+          : `Done — ${totalImported} plays imported.`;
+
+      enrichProgress.style.display = 'block';
+      void enrichLoop();
+    }
+
+    interface StatusResponse {
+      enrichment: { total: number; done: number; failed: number; pending: number };
+    }
+
+    async function fetchStatus(): Promise<StatusResponse> {
+      const response = await fetch('/api/import/status');
+      if (!response.ok) throw new Error(`Status check failed (${response.status})`);
+      return response.json();
+    }
+
+    function renderEnrichProgress(enrichment: StatusResponse['enrichment']): void {
+      const pct = enrichment.total > 0 ? Math.round((enrichment.done / enrichment.total) * 100) : 0;
+      enrichProgressBar.style.width = `${pct}%`;
+      enrichProgressText.textContent =
+        enrichment.pending > 0
+          ? `Matching artists — ${enrichment.done} of ${enrichment.total}`
+          : `All matched — ${enrichment.total} of ${enrichment.total} tracks resolved.`;
+    }
+
+    interface EnrichTickResponse {
+      rateLimited: boolean;
+      retryAfterSeconds?: number;
+    }
+
+    async function enrichLoop(): Promise<void> {
+      let status = await fetchStatus();
+      renderEnrichProgress(status.enrichment);
+
+      while (status.enrichment.pending > 0) {
+        const response = await fetch('/api/import/enrich-tick', { method: 'POST' });
+        const tick: EnrichTickResponse = await response.json();
+        await sleep(tick.rateLimited ? (tick.retryAfterSeconds ?? 30) * 1000 : 1500);
+        status = await fetchStatus();
+        renderEnrichProgress(status.enrichment);
+      }
+    }
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files.length > 0) void handleFiles(fileInput.files);
+    });
+
+    if (Number(enrichProgress.dataset.initialPending ?? '0') > 0) {
+      enrichProgress.style.display = 'block';
+      void enrichLoop();
+    }
+  </script>
+</AppShell>

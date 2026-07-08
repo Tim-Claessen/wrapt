@@ -1,16 +1,17 @@
 ---
 // Mirrors SPEC's "Trends row": big mono rank · art · title/meta · movement indicator.
-// Movement is only meaningful when `computed` is true (native Spotify windows have no prior-period data).
+// Movement is only meaningful when `showMovement` is true — native Spotify windows and the
+// lifetime window both have no usable prior-period data (lifetime has no "previous lifetime").
 import type { LeaderboardEntry } from '../lib/leaderboard';
 
 interface Props {
   entry: LeaderboardEntry;
-  computed: boolean;
+  showMovement: boolean;
   shape: 'circle' | 'square';
 }
-const { entry, computed, shape } = Astro.props;
+const { entry, showMovement, shape } = Astro.props;
 
-const delta = computed && entry.prevRank !== null ? entry.prevRank - entry.rank : null;
+const delta = showMovement && entry.prevRank !== null ? entry.prevRank - entry.rank : null;
 ---
 
 <div class="lb-row">
@@ -23,7 +24,7 @@ const delta = computed && entry.prevRank !== null ? entry.prevRank - entry.rank 
     {entry.subtitle && <div class="lb-row__subtitle">{entry.subtitle}</div>}
   </div>
   {
-    computed && (
+    showMovement && (
       <div class="lb-row__movement mono">
         {entry.prevRank === null ? (
           <span class="lb-row__pill lb-row__pill--new">NEW</span>
