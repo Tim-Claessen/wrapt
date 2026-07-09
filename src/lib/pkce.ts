@@ -1,4 +1,4 @@
-// Authorization Code + PKCE helpers (SDD §4.1) — public-client flow, no client secret in the exchange.
+// Authorization Code + PKCE helpers — public-client flow, no client secret in the exchange (see CLAUDE.md).
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';

@@ -4,7 +4,7 @@ import { encryptToken } from '../../../lib/crypto';
 import { exchangeCodeForTokens, getSpotifyProfile, SPOTIFY_SCOPES, SpotifyTokenExpiredError } from '../../../lib/spotify';
 
 // Spotify's redirect target: exchanges the auth code for tokens, encrypts the refresh token,
-// and stores the profile. Spotify tokens never reach the client (SDD §2).
+// and stores the profile. Spotify tokens never reach the client (see CLAUDE.md).
 export const GET: APIRoute = async ({ request, cookies, redirect, locals }) => {
   const env = locals.runtime.env;
   const url = new URL(request.url);

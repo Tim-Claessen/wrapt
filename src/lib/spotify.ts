@@ -1,4 +1,4 @@
-// Spotify Authorization Code + PKCE flow (SDD §4.1) and server-side token refresh (SDD §2 — tokens never touch the client).
+// Spotify Authorization Code + PKCE flow and server-side token refresh — tokens never touch the client (see CLAUDE.md).
 
 const AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';

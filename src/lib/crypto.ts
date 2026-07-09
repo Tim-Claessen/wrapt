@@ -1,4 +1,4 @@
-// AES-GCM encryption for refresh tokens at rest (SDD §5 Security).
+// AES-GCM encryption for refresh tokens at rest (see CLAUDE.md → security invariants).
 // TOKEN_ENC_KEY is a base64-encoded 32-byte key, generated once and held as a Worker secret — never in the client bundle.
 
 const IV_BYTES = 12;
