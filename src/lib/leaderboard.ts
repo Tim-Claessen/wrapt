@@ -37,10 +37,6 @@ export interface DateRange {
   prevUntil: Date;
 }
 
-function computedRange(window: LeaderboardWindow, custom?: { since: Date; until: Date }): DateRange {
-  return resolveWindowRange(window, custom);
-}
-
 // Date range (plus an equal-length "previous period" for deltas) for any window. Every window is
 // sliced from `plays`, so the previous period is always available except for `all`, which is
 // deliberately zero-width (nothing meaningful to diff "everything, ever" against).
@@ -151,7 +147,7 @@ export async function getLeaderboard(params: GetLeaderboardParams): Promise<Lead
   const { supabase, profileId, kind, window, customSince, customUntil, genre = null, artist = null, limit = 10 } =
     params;
 
-  const range = computedRange(window, window === 'custom' ? { since: customSince!, until: customUntil! } : undefined);
+  const range = resolveWindowRange(window, window === 'custom' ? { since: customSince!, until: customUntil! } : undefined);
   const entries =
     kind === 'artists'
       ? await computedArtists(supabase, profileId, range, genre, limit)

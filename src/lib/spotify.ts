@@ -150,21 +150,6 @@ export interface SpotifyArtist {
   images: { url: string }[];
 }
 
-export type SpotifyTopTimeRange = 'short_term' | 'medium_term' | 'long_term';
-
-export async function getTopItems(
-  accessToken: string,
-  type: 'artists' | 'tracks',
-  timeRange: SpotifyTopTimeRange,
-  limit = 10,
-): Promise<{ items: (SpotifyTrack | SpotifyArtist)[] }> {
-  const response = await authGet(`/me/top/${type}?time_range=${timeRange}&limit=${limit}`, accessToken);
-  if (!response.ok) {
-    throw new Error(`Spotify top ${type} request failed: ${response.status} ${await response.text()}`);
-  }
-  return response.json();
-}
-
 export interface SpotifyRecentlyPlayedItem {
   played_at: string;
   track: SpotifyTrack;
