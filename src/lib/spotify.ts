@@ -4,9 +4,10 @@ const AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const API_BASE = 'https://api.spotify.com/v1';
 
-// Read-only scopes only — no playlist-modify-* (CLAUDE.md privacy commitment: "we only read what you play, never post").
-// SDD §4.1 lists modify scopes for the Mark 2 AI-playlist push, deferred until that feature is actually built.
-export const SPOTIFY_SCOPES = ['user-top-read', 'user-read-recently-played', 'playlist-read-private'];
+// Read-only scopes, and only the ones we actually use: user-read-recently-played (the sync cron's
+// play log) and playlist-read-private (the user's own playlists). Never request write/modify scopes —
+// "we only read what you play, never post" is a product commitment, not just a default.
+export const SPOTIFY_SCOPES = ['user-read-recently-played', 'playlist-read-private'];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
