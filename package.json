@@ -10,6 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
+    "check": "astro check",
     "generate-types": "wrangler types",
     "sync:dev": "wrangler dev -c workers/sync/wrangler.jsonc --test-scheduled",
     "sync:deploy": "wrangler deploy -c workers/sync/wrangler.jsonc"
