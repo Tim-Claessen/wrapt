@@ -10,8 +10,17 @@ import { drainGlobalEnrichmentBacklog } from '../../../src/lib/import';
 import { SpotifyRateLimitError, SpotifyTokenExpiredError } from '../../../src/lib/spotify';
 
 // Larger than the /import page's own foreground tick (25) since this runs unattended and can
-// afford to spend more of the cron's own time budget per cycle.
-const ENRICHMENT_DRAIN_BATCH_SIZE = 200;
+// afford to spend more of the cron's own time budget per cycle. Drained over several rounds with
+// gentle per-request pacing so a big imported backlog actually shrinks each cycle instead of
+// tripping the dev-mode rate window on the first request and abandoning the whole cycle.
+const ENRICHMENT_DRAIN_BATCH_SIZE = 100;
+const ENRICHMENT_MAX_ROUNDS = 4;
+const ENRICHMENT_PACING_MS = 150;
+const ENRICHMENT_RATE_LIMIT_SLEEP_CAP_S = 15;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export type SyncEnv = {
   SPOTIFY_CLIENT_ID: string;
@@ -90,18 +99,38 @@ async function runSync(env: SyncEnv): Promise<void> {
     console.log('[sync] import enrichment: no usable access token this cycle, skipping');
     return;
   }
-  try {
-    const result = await drainGlobalEnrichmentBacklog(supabase, lastAccessToken, ENRICHMENT_DRAIN_BATCH_SIZE);
-    console.log(
-      `[sync] import enrichment: resolved ${result.resolved}, failed ${result.failed}${result.rateLimited ? ' (rate limited)' : ''}`,
-    );
-  } catch (err) {
-    if (err instanceof SpotifyRateLimitError) {
-      console.warn(`[sync] import enrichment rate limited this cycle (retry after ${err.retryAfterSeconds}s)`);
-      return;
+  let totalResolved = 0;
+  let totalFailed = 0;
+  for (let round = 0; round < ENRICHMENT_MAX_ROUNDS; round++) {
+    let result;
+    try {
+      result = await drainGlobalEnrichmentBacklog(
+        supabase,
+        lastAccessToken,
+        ENRICHMENT_DRAIN_BATCH_SIZE,
+        ENRICHMENT_PACING_MS,
+      );
+    } catch (err) {
+      if (err instanceof SpotifyRateLimitError) {
+        console.warn(`[sync] import enrichment rate limited (retry after ${err.retryAfterSeconds}s), stopping drain for this cycle`);
+        break;
+      }
+      console.error('[sync] import enrichment drain failed:', err);
+      break;
     }
-    console.error('[sync] import enrichment drain failed:', err);
+    totalResolved += result.resolved;
+    totalFailed += result.failed;
+    // Rate-limited mid-round: the unprocessed tracks are still pending, so wait out the window
+    // (bounded) and take another round rather than abandoning the cycle.
+    if (result.rateLimited) {
+      const waitS = Math.min(result.retryAfterSeconds ?? 30, ENRICHMENT_RATE_LIMIT_SLEEP_CAP_S);
+      console.warn(`[sync] import enrichment hit rate limit; waiting ${waitS}s then continuing`);
+      await sleep(waitS * 1000);
+      continue;
+    }
+    if (result.processed === 0) break; // backlog drained
   }
+  console.log(`[sync] import enrichment: resolved ${totalResolved}, failed ${totalFailed}`);
 }
 
 export default {

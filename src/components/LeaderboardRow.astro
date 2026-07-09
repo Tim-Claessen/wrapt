@@ -31,7 +31,7 @@ const minutes = entry.totalMs && entry.totalMs > 0 ? formatMinutes(entry.totalMs
   {
     entry.playCount !== null && (
       <div class="lb-row__stats mono">
-        <span class="lb-row__plays">{entry.playCount} plays</span>
+        <span class="lb-row__plays" title={`${entry.playCount} plays this period`}>{entry.playCount} plays</span>
         {minutes && <span class="lb-row__mins">{minutes}</span>}
       </div>
     )
@@ -40,13 +40,13 @@ const minutes = entry.totalMs && entry.totalMs > 0 ? formatMinutes(entry.totalMs
     showMovement && (
       <div class="lb-row__movement mono">
         {entry.prevRank === null ? (
-          <span class="lb-row__pill lb-row__pill--new">NEW</span>
+          <span class="lb-row__pill lb-row__pill--new" title="New to the ranking this period">NEW</span>
         ) : delta && delta > 0 ? (
-          <span class="lb-row__delta lb-row__delta--up">▲ {delta}</span>
+          <span class="lb-row__delta lb-row__delta--up" title={`Up ${delta} ${delta === 1 ? 'place' : 'places'} in the ranking`}>▲ {delta}</span>
         ) : delta && delta < 0 ? (
-          <span class="lb-row__delta lb-row__delta--down">▼ {Math.abs(delta)}</span>
+          <span class="lb-row__delta lb-row__delta--down" title={`Down ${Math.abs(delta)} ${Math.abs(delta) === 1 ? 'place' : 'places'} in the ranking`}>▼ {Math.abs(delta)}</span>
         ) : (
-          <span class="lb-row__delta lb-row__delta--steady">•</span>
+          <span class="lb-row__delta lb-row__delta--steady" title="No change in rank">•</span>
         )}
       </div>
     )

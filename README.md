@@ -57,4 +57,11 @@ wrangler secret put <NAME> -c workers/sync/wrangler.jsonc
   ```
 
   It dedups by timestamp, batches through the `ingest_import_plays` RPC, and prints the corrected last-30-day minutes. Idempotent, and reads DB creds from `.dev.vars`. (The web `/import` path is also safe as of migration `20260709000003`, which dedups same-timestamp plays that previously errored a batch mid-upload — the reason large web re-uploads used to stall partway.)
-- **Outstanding manual step:** none currently — all 10 migrations (through `20260709000003`), the production Spotify redirect URI, every Cloudflare secret (Pages + sync worker), and the one-time `ms_played` backfill are confirmed in place as of 2026-07-09.
+- **Draining the import enrichment backlog (album art / artist ids / genres data).** Imported plays need a per-track Spotify lookup to backfill album art, artist ids and true duration. That only drains fast while the `/import` tab is open; once closed, only the 2-hourly cron runs (throttled), so a big backlog can look "stuck" for a long time. To finish it in one sitting locally:
+
+  ```
+  node scripts/backfill-enrichment.mjs
+  ```
+
+  It prints before/after progress, then grinds through every `pending` track, sleeping through rate limits. Idempotent and resumable — safe to Ctrl-C and re-run. (The cron was also made to drain in bounded rounds with pacing rather than abandoning a cycle on the first rate-limit, so unattended progress no longer crawls.)
+- **Outstanding manual step:** run `node scripts/backfill-enrichment.mjs` to clear the imported album-art/artist backlog (measured ~2 tracks/sec un-throttled → ~3.5–4h for the current ~27k backlog; resumable). All migrations (through `20260709000004_plays_history.sql`, which powers `/history`), the production Spotify redirect URI, every Cloudflare secret (Pages + sync worker), and the one-time `ms_played` backfill are confirmed applied as of 2026-07-09. The `db push` CLI still isn't linked on this machine, so keep hand-pasting new migrations in filename order (see CLAUDE.md).

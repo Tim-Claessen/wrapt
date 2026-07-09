@@ -1,0 +1,516 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import EmptyState from '../components/EmptyState.astro';
+import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
+import { getPlaysHistorySince } from '../lib/leaderboard';
+import { getHistoryPage, getHistorySummary, type HistoryFilter } from '../lib/history';
+import { formatCompactNumber, formatMinutes } from '../lib/format';
+
+const env = Astro.locals.runtime.env;
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
+const {
+  data: { user },
+} = await supabase.auth.getUser();
+
+if (!user) return Astro.redirect('/login');
+
+const { data: profile } = await supabase
+  .from('spotify_profiles')
+  .select('id, display_name')
+  .eq('user_id', user.id)
+  .maybeSingle();
+
+if (!profile) return Astro.redirect('/connect');
+
+const profileId = profile.id;
+const service = createSupabaseServiceClient(env);
+const url = Astro.url;
+
+const PAGE_SIZE = 50;
+
+const sinceParam = url.searchParams.get('since');
+const untilParam = url.searchParams.get('until');
+const qParam = url.searchParams.get('q');
+const pageParam = Number(url.searchParams.get('page') ?? '1');
+const page = Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) : 1;
+const offset = (page - 1) * PAGE_SIZE;
+
+const filter: HistoryFilter = {
+  since: sinceParam ? new Date(sinceParam) : null,
+  until: untilParam ? new Date(`${untilParam}T23:59:59`) : null,
+  query: qParam,
+};
+const hasActiveFilter = Boolean(sinceParam || untilParam || (qParam && qParam.trim() !== ''));
+
+let historySince: Date | null = null;
+let rows: Awaited<ReturnType<typeof getHistoryPage>> = [];
+let summary: Awaited<ReturnType<typeof getHistorySummary>> = {
+  totalPlays: 0,
+  distinctTracks: 0,
+  distinctArtists: 0,
+  totalMs: 0,
+};
+let loadError: string | null = null;
+
+try {
+  [historySince, rows, summary] = await Promise.all([
+    getPlaysHistorySince(service, profileId),
+    getHistoryPage(service, profileId, filter, PAGE_SIZE, offset),
+    getHistorySummary(service, profileId, filter),
+  ]);
+} catch {
+  loadError = 'Something went wrong loading your history. Try refreshing.';
+}
+
+function buildHref(overrides: Record<string, string | null>): string {
+  const params = new URLSearchParams(url.searchParams);
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === null) params.delete(key);
+    else params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `${url.pathname}?${query}` : url.pathname;
+}
+
+const total = summary.totalPlays;
+const rangeFrom = total === 0 ? 0 : offset + 1;
+const rangeTo = offset + rows.length;
+const hasPrev = page > 1;
+const hasNext = rangeTo < total;
+
+const heroStats = [
+  { label: 'Plays', value: formatCompactNumber(summary.totalPlays) },
+  { label: 'Tracks', value: formatCompactNumber(summary.distinctTracks) },
+  { label: 'Artists', value: formatCompactNumber(summary.distinctArtists) },
+  { label: 'Minutes', value: formatMinutes(summary.totalMs) },
+];
+
+// Absolute London-time — SSR runs UTC on Cloudflare, so pin the zone rather than trust the server
+// locale (the UK household reads the times it expects). Date and time split onto two lines.
+function whenParts(date: Date): { date: string; time: string } {
+  return {
+    date: date.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', year: 'numeric' }),
+    time: date.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }),
+  };
+}
+---
+
+<AppShell title="Play History" wide nav>
+  <div class="hist">
+    <header class="hist__head">
+      <span class="eyebrow mono">Play History</span>
+      <h1 class="hist__title">Everything you've played</h1>
+      <p class="hist__lede">Every logged play, newest first. Filter by date or search a song or artist.</p>
+    </header>
+
+    {loadError && <p class="load-error mono">{loadError}</p>}
+
+    {
+      !loadError && historySince === null ? (
+        <EmptyState
+          title="No plays yet"
+          body="As you listen (and once you import your history), every play shows up here."
+          hint="◷ syncing your last plays…"
+        />
+      ) : (
+        !loadError && (
+          <Fragment>
+            {/* HERO stats — reflect the current filter */}
+            <section class="hist__stats">
+              {heroStats.map((s) => (
+                <div class="hstat">
+                  <span class="hstat__v mono">{s.value}</span>
+                  <span class="hstat__l mono">{s.label}</span>
+                </div>
+              ))}
+            </section>
+
+            {/* Filters */}
+            <form method="get" class="filters">
+              <div class="filters__group">
+                <label class="filters__label mono" for="q">Search</label>
+                <input
+                  id="q"
+                  type="search"
+                  name="q"
+                  value={qParam ?? ''}
+                  placeholder="Song or artist…"
+                  class="filters__input filters__input--wide"
+                />
+              </div>
+              <div class="filters__group">
+                <label class="filters__label mono" for="since">From</label>
+                <input id="since" type="date" name="since" value={sinceParam ?? ''} class="filters__input" />
+              </div>
+              <div class="filters__group">
+                <label class="filters__label mono" for="until">To</label>
+                <input id="until" type="date" name="until" value={untilParam ?? ''} class="filters__input" />
+              </div>
+              <div class="filters__actions">
+                <button type="submit" class="filters__submit">Apply</button>
+                {hasActiveFilter && (
+                  <a href={url.pathname} class="filters__clear mono">Clear</a>
+                )}
+              </div>
+            </form>
+
+            {/* Table */}
+            {rows.length > 0 ? (
+              <Fragment>
+                <div class="table" role="table">
+                  <div class="row row--head mono" role="row">
+                    <span role="columnheader" />
+                    <span role="columnheader" class="cell-song">Song</span>
+                    <span role="columnheader" class="cell-artist">Artist</span>
+                    <span role="columnheader" class="cell-when">Played</span>
+                  </div>
+                  {rows.map((r) => {
+                    const when = whenParts(r.playedAt);
+                    return (
+                      <div class="row" role="row">
+                        <div class="cell-art" role="cell">
+                          {r.albumImage ? (
+                            <img src={r.albumImage} alt="" loading="lazy" />
+                          ) : (
+                            <div class="cell-art__fallback" />
+                          )}
+                        </div>
+                        <div class="cell-song" role="cell" title={r.trackName}>{r.trackName}</div>
+                        <div class="cell-artist" role="cell" title={r.artistNames.join(', ')}>
+                          {r.artistNames.join(', ')}
+                        </div>
+                        <div class="cell-when mono" role="cell">
+                          <span class="cell-when__d">{when.date}</span>
+                          <span class="cell-when__t">{when.time}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div class="pager mono">
+                  <span class="pager__count">Showing {rangeFrom.toLocaleString()}–{rangeTo.toLocaleString()} of {total.toLocaleString()}</span>
+                  <div class="pager__btns">
+                    {hasPrev ? (
+                      <a class="pager__btn" href={buildHref({ page: page === 2 ? null : String(page - 1) })}>‹ Newer</a>
+                    ) : (
+                      <span class="pager__btn pager__btn--disabled">‹ Newer</span>
+                    )}
+                    {hasNext ? (
+                      <a class="pager__btn" href={buildHref({ page: String(page + 1) })}>Older ›</a>
+                    ) : (
+                      <span class="pager__btn pager__btn--disabled">Older ›</span>
+                    )}
+                  </div>
+                </div>
+              </Fragment>
+            ) : (
+              <p class="empty-note">No plays match these filters. Try widening the date range or clearing the search.</p>
+            )}
+          </Fragment>
+        )
+      )
+    }
+  </div>
+</AppShell>
+
+<style>
+  .hist {
+    max-width: 820px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .hist__title {
+    margin: 6px 0 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+  }
+
+  .hist__lede {
+    margin: 8px 0 0;
+    font-size: 13.5px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .load-error {
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--down);
+  }
+
+  /* ---- hero stats ---- */
+  .hist__stats {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .hstat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 14px 16px;
+  }
+
+  .hstat__v {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hstat__l {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  /* ---- filters ---- */
+  .filters {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+  }
+
+  .filters__group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 1 1 130px;
+  }
+
+  .filters__group:first-child {
+    flex: 1 1 100%;
+  }
+
+  .filters__label {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .filters__input {
+    width: 100%;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 9px 11px;
+    color: var(--text-1);
+    font-family: 'Space Mono', monospace;
+    font-size: 12.5px;
+  }
+
+  .filters__actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+  }
+
+  .filters__submit {
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-weight: 700;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .filters__clear {
+    color: var(--text-3);
+    text-decoration: none;
+    font-size: 12px;
+  }
+
+  .filters__clear:hover {
+    color: var(--text-1);
+  }
+
+  /* ---- table ---- */
+  .table {
+    margin-top: 24px;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    grid-template-areas:
+      'art song when'
+      'art artist when';
+    align-items: center;
+    gap: 2px 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .row--head {
+    display: none;
+  }
+
+  .cell-art {
+    grid-area: art;
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .cell-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .cell-art__fallback {
+    width: 100%;
+    height: 100%;
+  }
+
+  .cell-song {
+    grid-area: song;
+    font-size: 14px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .cell-artist {
+    grid-area: artist;
+    font-size: 12.5px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .cell-when {
+    grid-area: when;
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    white-space: nowrap;
+  }
+
+  .cell-when__d {
+    font-size: 11.5px;
+    color: var(--text-2);
+  }
+
+  .cell-when__t {
+    font-size: 10.5px;
+    color: var(--text-3);
+  }
+
+  /* Desktop: a proper 4-column table with a header row. */
+  @media (min-width: 680px) {
+    .row {
+      grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1.5fr) 150px;
+      grid-template-areas: 'art song artist when';
+      gap: 14px;
+    }
+
+    .row--head {
+      display: grid;
+      padding: 0 0 10px;
+      border-bottom: 1px solid var(--hairline);
+    }
+
+    .row--head span {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-3);
+    }
+
+    .cell-artist {
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    .cell-when {
+      flex-direction: row;
+      align-items: baseline;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+  }
+
+  /* ---- pager ---- */
+  .pager {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .pager__count {
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+
+  .pager__btns {
+    display: flex;
+    gap: 8px;
+  }
+
+  .pager__btn {
+    text-decoration: none;
+    color: var(--text-1);
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 12.5px;
+  }
+
+  .pager__btn:hover {
+    border-color: var(--gold);
+  }
+
+  .pager__btn--disabled {
+    color: var(--text-4);
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .empty-note {
+    margin-top: 24px;
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  @media (min-width: 560px) {
+    .hist__stats {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+</style>

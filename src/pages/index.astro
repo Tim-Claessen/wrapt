@@ -1,20 +1,16 @@
 ---
 import AppShell from '../layouts/AppShell.astro';
 import RangeToggle from '../components/RangeToggle.astro';
-import GenreSlicer from '../components/GenreSlicer.astro';
 import LeaderboardRow from '../components/LeaderboardRow.astro';
 import ImportCallout from '../components/ImportCallout.astro';
 import TrendChart from '../components/TrendChart.astro';
 import ListeningHeatmap from '../components/ListeningHeatmap.astro';
-import GenreMix from '../components/GenreMix.astro';
 import EmptyState from '../components/EmptyState.astro';
 import Skeleton from '../components/Skeleton.astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
 import {
-  getAvailableGenres,
   getLeaderboard,
   getPlaysHistorySince,
-  getTopGenresForRange,
   resolveWindowRange,
   type LeaderboardKind,
   type LeaderboardWindow,
@@ -50,7 +46,6 @@ const url = Astro.url;
 const KINDS: { value: LeaderboardKind; label: string }[] = [
   { value: 'artists', label: 'Artists' },
   { value: 'tracks', label: 'Tracks' },
-  { value: 'genres', label: 'Genres' },
 ];
 const WINDOWS: { value: LeaderboardWindow; label: string }[] = [
   { value: '7d', label: '7 days' },
@@ -69,8 +64,6 @@ const windowParam = url.searchParams.get('window');
 const activeWindow: LeaderboardWindow = WINDOWS.some((w) => w.value === windowParam)
   ? (windowParam as LeaderboardWindow)
   : '30d';
-
-const activeGenre = url.searchParams.get('genre');
 
 // Drill-down: ?artist=<name> shows that one artist's tracks (the tracks leaderboard, filtered to one
 // artist). It forces the tracks view regardless of which kind tab is selected.
@@ -96,7 +89,6 @@ const trendBucket = pickTrendBucket(range);
 
 let hasMovement = false;
 let entries: Awaited<ReturnType<typeof getLeaderboard>>['entries'] = [];
-let availableGenres: string[] = [];
 let historySince: Date | null = null;
 let importProgress: Awaited<ReturnType<typeof getImportProgress>> = { total: 0, done: 0, failed: 0, pending: 0 };
 let recentPlays: Awaited<ReturnType<typeof getRecentPlays>> = [];
@@ -109,20 +101,17 @@ let heatmap: Awaited<ReturnType<typeof getListeningHeatmap>> = {
   grid: Array.from({ length: 7 }, () => Array(24).fill(0)),
   max: 0,
 };
-let genreMix: Awaited<ReturnType<typeof getTopGenresForRange>> = [];
 let loadError: string | null = null;
 
 try {
   [
     { hasMovement, entries },
-    availableGenres,
     historySince,
     importProgress,
     recentPlays,
     summary,
     trend,
     heatmap,
-    genreMix,
   ] = await Promise.all([
     getLeaderboard({
       supabase: service,
@@ -131,18 +120,15 @@ try {
       window: queryWindow,
       customSince,
       customUntil,
-      genre: activeGenre,
       artist: drillArtist,
       limit: 10,
     }),
-    getAvailableGenres(service, profile.id, queryWindow, customSince, customUntil),
     getPlaysHistorySince(service, profile.id),
     getImportProgress(service, profile.id),
     getRecentPlays(service, profile.id, 12),
     getListeningSummary(service, profile.id, range),
     getListeningTrend(service, profile.id, range, trendBucket),
     getListeningHeatmap(service, profile.id, range),
-    getTopGenresForRange(service, profile.id, range, 6),
   ]);
 } catch {
   loadError = 'Something went wrong loading your dashboard. Try refreshing.';
@@ -160,12 +146,10 @@ function buildHref(overrides: Record<string, string | null>): string {
 
 const rowShape = effectiveKind === 'artists' ? 'circle' : 'square';
 
-// Per-row drill link: an artist row opens that artist's tracks; a genre row opens the artists in
-// that genre (with the genre filter applied). Track rows are leaves — no link.
+// Per-row drill link: an artist row opens that artist's tracks. Track rows are leaves — no link.
 function rowHref(entry: (typeof entries)[number]): string | null {
   if (drillArtist) return null;
-  if (effectiveKind === 'artists') return buildHref({ artist: entry.title, genre: null });
-  if (effectiveKind === 'genres') return buildHref({ kind: 'artists', genre: entry.title, artist: null });
+  if (effectiveKind === 'artists') return buildHref({ artist: entry.title });
   return null;
 }
 
@@ -205,7 +189,7 @@ const heroStats = [
 ];
 
 const topEntry = entries[0] ?? null;
-const kindSingular = effectiveKind === 'artists' ? 'artist' : effectiveKind === 'tracks' ? 'track' : 'genre';
+const kindSingular = effectiveKind === 'artists' ? 'artist' : 'track';
 const topMoveDelta =
   topEntry && hasMovement && topEntry.prevRank !== null ? topEntry.prevRank - topEntry.rank : null;
 
@@ -260,7 +244,7 @@ const trendPoints = trend.map((point) => ({
             <RangeToggle
               options={WINDOWS}
               active={activeWindow}
-              buildHref={(value) => buildHref({ window: value, genre: null, since: null, until: null })}
+              buildHref={(value) => buildHref({ window: value, since: null, until: null })}
             />
           </div>
 
@@ -317,7 +301,7 @@ const trendPoints = trend.map((point) => ({
               </div>
 
               <div class="hero__compare mono">
-                {hasPrev ? `▲ ▼ change vs. ${compareText}` : 'All of your listening — no prior period to compare.'}
+                {hasPrev ? `▲▼ = % change in these totals vs. ${compareText}` : 'All of your listening — no prior period to compare.'}
               </div>
             </div>
           </section>
@@ -355,10 +339,10 @@ const trendPoints = trend.map((point) => ({
                       {topEntry.subtitle && <span class="one__by">{topEntry.subtitle}</span>}
                       {hasMovement && topEntry.prevRank === null && <span class="chip chip--new">NEW</span>}
                       {hasMovement && topMoveDelta !== null && topMoveDelta > 0 && (
-                        <span class="chip chip--up">▲ {topMoveDelta}</span>
+                        <span class="chip chip--up">▲ {topMoveDelta} {topMoveDelta === 1 ? 'place' : 'places'}</span>
                       )}
                       {hasMovement && topMoveDelta !== null && topMoveDelta < 0 && (
-                        <span class="chip chip--down">▼ {Math.abs(topMoveDelta)}</span>
+                        <span class="chip chip--down">▼ {Math.abs(topMoveDelta)} {Math.abs(topMoveDelta) === 1 ? 'place' : 'places'}</span>
                       )}
                     </div>
                   </div>
@@ -373,32 +357,38 @@ const trendPoints = trend.map((point) => ({
                   <span class="drill-title">
                     Songs by <b>{drillArtist}</b>
                   </span>
-                  <span class="rank-sub mono">{hasMovement ? `vs. ${compareText}` : 'ranked by plays'}</span>
+                  <span class="rank-sub mono">{hasMovement ? `▲▼ rank change vs. ${compareText}` : 'ranked by plays'}</span>
                 </div>
               ) : (
                 <div class="rank-head">
                   <div class="rank-tabs mono">
                     {KINDS.map((k) => (
                       <a
-                        href={buildHref({ kind: k.value, ...(k.value === 'genres' ? { genre: null } : {}) })}
+                        href={buildHref({ kind: k.value })}
                         class:list={['rank-tab', { 'is-active': k.value === activeKind }]}
                       >
                         {k.label}
                       </a>
                     ))}
                   </div>
-                  <span class="rank-sub mono">{hasMovement ? `vs. ${compareText}` : 'ranked by plays'}</span>
+                  <span class="rank-sub mono">{hasMovement ? `▲▼ rank change vs. ${compareText}` : 'ranked by plays'}</span>
                 </div>
               )
             }
 
-            {
-              !drillArtist && availableGenres.length > 0 && (
-                <div class="rank-slicer">
-                  <GenreSlicer genres={availableGenres} active={activeGenre} buildHref={(genre) => buildHref({ genre })} />
-                </div>
-              )
-            }
+            {/* Legend: the two right-hand figures on every row mean different things — the count is
+                plays this window, the arrow is how far the entry moved in the ranking. */}
+            <p class="rank-legend mono">
+              <b>N plays</b> = times played this {activeWindow === 'custom' ? 'range' : activeWindowLabel.toLowerCase()}
+              {hasMovement && (
+                <Fragment>
+                  {' · '}
+                  <span class="up">▲</span>/<span class="down">▼</span> = places moved vs. {compareText}
+                  {' · '}
+                  <span class="rank-legend__new">NEW</span> = not ranked {compareText}
+                </Fragment>
+              )}
+            </p>
 
             <div class="rank-rows">
               {
@@ -427,16 +417,6 @@ const trendPoints = trend.map((point) => ({
             </div>
           </section>
 
-          {
-            genreMix.length > 0 && (
-              <section class="genre-sec">
-                <div class="panel">
-                  <div class="panel__title">Genre mix</div>
-                  <GenreMix genres={genreMix} />
-                </div>
-              </section>
-            )
-          }
         </Fragment>
       )
     }
@@ -790,8 +770,22 @@ const trendPoints = trend.map((point) => ({
     font-weight: 700;
   }
 
-  .rank-slicer {
-    margin-top: 14px;
+  .rank-legend {
+    margin-top: 12px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+  }
+
+  .rank-legend b {
+    color: var(--text-2);
+    font-weight: 700;
+  }
+
+  .rank-legend__new {
+    color: var(--gold);
+    font-weight: 700;
   }
 
   .rank-rows {
@@ -826,10 +820,6 @@ const trendPoints = trend.map((point) => ({
     font-weight: 600;
     color: var(--text-1);
     margin-bottom: 12px;
-  }
-
-  .genre-sec {
-    margin-top: 16px;
   }
 
   /* ---- forms ---- */

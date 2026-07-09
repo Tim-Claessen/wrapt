@@ -5,7 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // (NEW / ▲ / ▼) from day one, 6-month view included. `all` is the exception: "everything, ever"
 // has no comparable previous period, so it carries no movement (see hasMovement in getLeaderboard).
 export type LeaderboardWindow = '7d' | '30d' | '6m' | 'all' | 'custom';
-export type LeaderboardKind = 'artists' | 'tracks' | 'genres';
+export type LeaderboardKind = 'artists' | 'tracks';
 
 const COMPUTED_WINDOW_DAYS: Record<'7d' | '30d' | '6m', number> = { '7d': 7, '30d': 30, '6m': 183 };
 
@@ -135,33 +135,6 @@ async function computedTracks(
   }));
 }
 
-async function computedGenres(
-  supabase: SupabaseClient,
-  profileId: string,
-  range: DateRange,
-  limit: number,
-): Promise<LeaderboardEntry[]> {
-  const { data, error } = await supabase.rpc('leaderboard_top_genres', {
-    p_profile_id: profileId,
-    p_since: range.since.toISOString(),
-    p_until: range.until.toISOString(),
-    p_prev_since: range.prevSince.toISOString(),
-    p_prev_until: range.prevUntil.toISOString(),
-    p_limit: limit,
-  });
-  if (error) throw error;
-  return (data ?? []).map((row: Record<string, unknown>) => ({
-    id: row.genre as string,
-    title: row.genre as string,
-    subtitle: null,
-    image: null,
-    playCount: row.play_count as number,
-    totalMs: (row.total_ms as number) ?? 0,
-    rank: row.rank as number,
-    prevRank: (row.prev_rank as number | null) ?? null,
-  }));
-}
-
 export interface GetLeaderboardParams {
   supabase: SupabaseClient; // service-role client — see leaderboard_* function grants
   profileId: string;
@@ -182,44 +155,10 @@ export async function getLeaderboard(params: GetLeaderboardParams): Promise<Lead
   const entries =
     kind === 'artists'
       ? await computedArtists(supabase, profileId, range, genre, limit)
-      : kind === 'tracks'
-        ? await computedTracks(supabase, profileId, range, genre, limit, artist)
-        : await computedGenres(supabase, profileId, range, limit);
+      : await computedTracks(supabase, profileId, range, genre, limit, artist);
   // Every window is computed; only `all` lacks a comparable prior period, so it's the one window
   // without movement indicators.
   return { computed: true, hasMovement: window !== 'all', entries };
-}
-
-// Available genre chips for the slicer, scoped to whatever window is currently selected.
-export async function getAvailableGenres(
-  supabase: SupabaseClient,
-  profileId: string,
-  window: LeaderboardWindow,
-  customSince?: Date,
-  customUntil?: Date,
-): Promise<string[]> {
-  const range = computedRange(window, window === 'custom' ? { since: customSince!, until: customUntil! } : undefined);
-  const { data, error } = await supabase.rpc('leaderboard_available_genres', {
-    p_profile_id: profileId,
-    p_since: range.since.toISOString(),
-    p_until: range.until.toISOString(),
-    p_limit: 12,
-  });
-  if (error) throw error;
-  return (data ?? []).map((row: { genre: string }) => row.genre);
-}
-
-// Top genres for the dashboard's "genre mix" chart — a thin wrapper around computedGenres that
-// drops the prev-rank movement data callers don't need for a plain magnitude bar chart. Genre
-// data only exists for computed windows (see NATIVE_WINDOWS note on getLeaderboard).
-export async function getTopGenresForRange(
-  supabase: SupabaseClient,
-  profileId: string,
-  range: DateRange,
-  limit = 6,
-): Promise<{ genre: string; playCount: number }[]> {
-  const entries = await computedGenres(supabase, profileId, range, limit);
-  return entries.map((entry) => ({ genre: entry.title, playCount: entry.playCount ?? 0 }));
 }
 
 // "History since <date>" note — lets sparse early computed windows read as expected, not broken.

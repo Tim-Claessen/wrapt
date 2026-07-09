@@ -2,6 +2,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getTrack, SpotifyRateLimitError, SpotifyTrackNotFoundError } from './spotify';
 import type { PlayRow } from './plays';
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const MIN_MS_PLAYED = 30_000; // matches the live recently-played endpoint's effective threshold (C10-adjacent — Spotify itself only logs plays past a similar bar), so historical and live rankings stay comparable.
 const LIVE_OVERLAP_TOLERANCE_MS = 2_000; // import `ts` is second-precision, live `played_at` is millisecond-precision — same play can land up to ~1s apart between the two sources.
 const TRACK_URI_PREFIX = 'spotify:track:';
@@ -135,12 +139,17 @@ async function resolveTracks(
   supabase: SupabaseClient,
   accessToken: string,
   trackIds: string[],
+  pacingMs = 0,
 ): Promise<EnrichTickResult> {
   let processed = 0;
   let resolved = 0;
   let failed = 0;
 
   for (const trackId of trackIds) {
+    // Optional gap between per-track lookups — the foreground loop already paces itself between
+    // ticks (25 at a time), but the unattended cron drains a big batch in one go and otherwise
+    // slams Spotify's short dev-mode rate window, tripping a 429 almost immediately.
+    if (pacingMs > 0 && processed > 0) await sleep(pacingMs);
     try {
       const track = await getTrack(accessToken, trackId);
       const { error } = await supabase.rpc('enrich_apply_track_metadata', {
@@ -199,11 +208,13 @@ export async function enrichNextBatch(
 }
 
 // Drains the shared global backlog regardless of which profile it belongs to — used by the 2-hourly
-// sync cron so import enrichment keeps progressing even with no /import tab open.
+// sync cron so import enrichment keeps progressing even with no /import tab open. `pacingMs` spaces
+// out the per-track lookups so an unattended run doesn't instantly trip the dev-mode rate window.
 export async function drainGlobalEnrichmentBacklog(
   supabase: SupabaseClient,
   accessToken: string,
   limit: number,
+  pacingMs = 0,
 ): Promise<EnrichTickResult> {
   const { data, error } = await supabase
     .from('import_track_enrichment')
@@ -213,5 +224,5 @@ export async function drainGlobalEnrichmentBacklog(
     .limit(limit);
   if (error) throw error;
   const trackIds = (data ?? []).map((row) => row.track_id as string);
-  return resolveTracks(supabase, accessToken, trackIds);
+  return resolveTracks(supabase, accessToken, trackIds, pacingMs);
 }

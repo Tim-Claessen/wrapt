@@ -10,6 +10,20 @@ const {
 if (!user) return Astro.redirect('/login');
 
 const errorParam = Astro.url.searchParams.get('error');
+
+// Already-connected users have no reason to see the connect screen — send them to the dashboard.
+// The one exception is an explicit reconnect flow (?error=token_expired / spotify_auth_failed): the
+// spotify_profiles row still exists there but the refresh token is dead, so the user needs the
+// button, not a redirect back to a dashboard that can't sync.
+if (!errorParam) {
+  const { data: existingProfile } = await supabase
+    .from('spotify_profiles')
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (existingProfile) return Astro.redirect('/');
+}
+
 const errorCopy: Record<string, string> = {
   spotify_auth_failed: 'Something went wrong connecting Spotify. Try again.',
   token_expired: 'Your Spotify connection expired. Reconnect to keep syncing.',

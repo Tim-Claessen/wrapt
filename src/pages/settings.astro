@@ -1,0 +1,321 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
+import { getImportProgress } from '../lib/import';
+import { formatRelativeTime } from '../lib/format';
+
+const env = Astro.locals.runtime.env;
+const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
+const {
+  data: { user },
+} = await supabase.auth.getUser();
+
+if (!user) return Astro.redirect('/login');
+
+const { data: profile } = await supabase
+  .from('spotify_profiles')
+  .select('id, display_name, connected_at, last_synced_at')
+  .eq('user_id', user.id)
+  .maybeSingle();
+
+if (!profile) return Astro.redirect('/connect');
+
+const profileId = profile.id;
+const service = createSupabaseServiceClient(env);
+
+// Newest insert time of a play from each source. `created_at` is the wall-clock ingest time, so
+// these are the real "last time something landed" markers — distinct from last_synced_at (which
+// bumps on every token mint, dashboard visit included). Imports only insert genuinely-new rows
+// (re-uploading an already-imported file backfills ms_played without a new row), so the import
+// figure is specifically "last upload that added new plays".
+async function latestCreatedAt(source: 'import' | 'live'): Promise<Date | null> {
+  const { data } = await service
+    .from('plays')
+    .select('created_at')
+    .eq('profile_id', profileId)
+    .eq('source', source)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? new Date(data.created_at as string) : null;
+}
+
+const [lastImport, lastLiveAdd, importProgress] = await Promise.all([
+  latestCreatedAt('import'),
+  latestCreatedAt('live'),
+  getImportProgress(service, profileId),
+]);
+
+const lastSynced = profile.last_synced_at ? new Date(profile.last_synced_at) : null;
+const connectedAt = profile.connected_at ? new Date(profile.connected_at) : null;
+const now = new Date();
+
+// Absolute London-time stamp — SSR runs UTC on Cloudflare, so pin the zone rather than trust the
+// server locale, and the two-person UK household reads the times they expect.
+function absolute(date: Date): string {
+  return date.toLocaleString('en-GB', {
+    timeZone: 'Europe/London',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+interface Field {
+  label: string;
+  date: Date | null;
+  hint: string;
+  emptyLabel?: string;
+}
+const fields: Field[] = [
+  {
+    label: 'Last manual upload',
+    date: lastImport,
+    hint: 'Most recent /import that added new plays.',
+    emptyLabel: 'No history imported yet',
+  },
+  {
+    label: 'Last auto refresh',
+    date: lastSynced,
+    hint: 'When we last checked Spotify for you (runs ~every 2 hours).',
+    emptyLabel: 'Not synced yet',
+  },
+  {
+    label: 'Last auto refresh that added songs',
+    date: lastLiveAdd,
+    hint: 'The last refresh that actually found new plays to log.',
+    emptyLabel: 'No live plays logged yet',
+  },
+];
+
+const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / importProgress.total) * 100) : 0;
+---
+
+<AppShell title="Settings" wide nav>
+  <div class="settings">
+    <header class="settings__head">
+      <span class="eyebrow mono">Settings</span>
+      <h1 class="settings__title">Your account & sync</h1>
+    </header>
+
+    <section class="card">
+      <div class="card__title mono">Spotify connection</div>
+      <div class="kv">
+        <span class="kv__k mono">Account</span>
+        <span class="kv__v">{profile.display_name ?? 'Connected'}</span>
+      </div>
+      <div class="kv">
+        <span class="kv__k mono">Connected</span>
+        <span class="kv__v">
+          {connectedAt ? `${absolute(connectedAt)}` : '—'}
+        </span>
+      </div>
+      <a class="btn" href="/api/auth/spotify">Reconnect Spotify</a>
+      <p class="card__note mono">
+        Reconnect if syncing has stopped (e.g. you changed your Spotify password or revoked access).
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="card__title mono">Sync & uploads</div>
+      {
+        fields.map((field) => (
+          <div class="stat">
+            <div class="stat__label">{field.label}</div>
+            {field.date ? (
+              <div class="stat__value">
+                <span class="stat__rel mono">{formatRelativeTime(field.date, now)} ago</span>
+                <span class="stat__abs mono">{absolute(field.date)}</span>
+              </div>
+            ) : (
+              <div class="stat__value stat__value--empty mono">{field.emptyLabel}</div>
+            )}
+            <div class="stat__hint mono">{field.hint}</div>
+          </div>
+        ))
+      }
+    </section>
+
+    <section class="card">
+      <div class="card__title mono">Import enrichment</div>
+      {
+        importProgress.total > 0 ? (
+          <Fragment>
+            <div class="stat__value mono" style="margin-bottom:10px;">
+              {importProgress.done.toLocaleString()} of {importProgress.total.toLocaleString()} tracks enriched
+              {importProgress.failed > 0 && <span class="stat__abs"> · {importProgress.failed} unavailable</span>}
+            </div>
+            <div class="bar">
+              <div class="bar__fill" style={`width:${enrichPct}%`} />
+            </div>
+            <p class="card__note mono">
+              {importProgress.pending > 0
+                ? `${importProgress.pending.toLocaleString()} tracks still need genres & album art. Open Import and leave the tab open to speed it up.`
+                : 'All imported tracks have their album art & details.'}
+            </p>
+            <a class="link mono" href="/import">Go to Import →</a>
+          </Fragment>
+        ) : (
+          <Fragment>
+            <p class="card__note mono">No imported history yet.</p>
+            <a class="link mono" href="/import">Import your history →</a>
+          </Fragment>
+        )
+      }
+    </section>
+  </div>
+</AppShell>
+
+<style>
+  .settings {
+    max-width: 620px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .settings__title {
+    margin: 6px 0 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+  }
+
+  .card {
+    margin-top: 20px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    padding: 18px;
+  }
+
+  .card__title {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 14px;
+  }
+
+  .card__note {
+    margin: 12px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-3);
+  }
+
+  .kv {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .kv__k {
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+  }
+
+  .kv__v {
+    font-size: 14px;
+    color: var(--text-1);
+    text-align: right;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stat {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .stat:last-child {
+    border-bottom: 0;
+  }
+
+  .stat__label {
+    font-size: 13.5px;
+    color: var(--text-1);
+    font-weight: 600;
+  }
+
+  .stat__value {
+    margin-top: 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .stat__rel {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--gold);
+  }
+
+  .stat__abs {
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .stat__value--empty {
+    font-size: 13px;
+    color: var(--text-3);
+  }
+
+  .stat__hint {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-3);
+  }
+
+  .btn {
+    display: inline-block;
+    margin-top: 16px;
+    background: var(--gold);
+    color: var(--gold-on);
+    text-decoration: none;
+    border-radius: 11px;
+    padding: 11px 16px;
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+
+  .link {
+    display: inline-block;
+    margin-top: 12px;
+    color: var(--gold);
+    text-decoration: none;
+    font-size: 12.5px;
+  }
+
+  .link:hover {
+    text-decoration: underline;
+  }
+
+  .bar {
+    height: 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  .bar__fill {
+    height: 100%;
+    background: var(--gold);
+    transition: width 0.3s ease;
+  }
+</style>
