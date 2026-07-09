@@ -1,6 +1,12 @@
 // Shared display formatting for the dashboard — durations, relative times, compact numbers.
 // Space Mono everywhere in the UI means these stay plain text, no icon fonts.
 
+// Wall-clock zone for every absolute timestamp/day-bucket the UI shows. SSR runs UTC on Cloudflare,
+// so we pin a zone rather than trust the server locale. The household is in Perth (AWST, UTC+8, no
+// DST) — mirror this string in the stats RPCs' `at time zone` (see 20260709000005_awst_stats.sql).
+// If we ever go per-user, this becomes a lookup off the profile instead of a constant.
+export const DISPLAY_TIME_ZONE = 'Australia/Perth';
+
 export function formatMinutes(totalMs: number): string {
   const totalMinutes = Math.round(totalMs / 60000);
   const hours = Math.floor(totalMinutes / 60);

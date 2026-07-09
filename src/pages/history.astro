@@ -4,7 +4,7 @@ import EmptyState from '../components/EmptyState.astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
 import { getPlaysHistorySince } from '../lib/leaderboard';
 import { getHistoryPage, getHistorySummary, type HistoryFilter } from '../lib/history';
-import { formatCompactNumber, formatMinutes } from '../lib/format';
+import { formatCompactNumber, formatMinutes, DISPLAY_TIME_ZONE } from '../lib/format';
 
 const env = Astro.locals.runtime.env;
 const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
@@ -85,12 +85,12 @@ const heroStats = [
   { label: 'Minutes', value: formatMinutes(summary.totalMs) },
 ];
 
-// Absolute London-time — SSR runs UTC on Cloudflare, so pin the zone rather than trust the server
-// locale (the UK household reads the times it expects). Date and time split onto two lines.
+// Absolute AWST-time — SSR runs UTC on Cloudflare, so pin the household zone (see DISPLAY_TIME_ZONE)
+// rather than trust the server locale. Date and time split onto two lines.
 function whenParts(date: Date): { date: string; time: string } {
   return {
-    date: date.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', year: 'numeric' }),
-    time: date.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }),
+    date: date.toLocaleDateString('en-GB', { timeZone: DISPLAY_TIME_ZONE, day: 'numeric', month: 'short', year: 'numeric' }),
+    time: date.toLocaleTimeString('en-GB', { timeZone: DISPLAY_TIME_ZONE, hour: '2-digit', minute: '2-digit' }),
   };
 }
 ---
@@ -293,6 +293,9 @@ function whenParts(date: Date): { date: string; time: string } {
     flex-direction: column;
     gap: 5px;
     flex: 1 1 130px;
+    /* Without this, native date inputs keep their intrinsic min width and can't shrink, so the
+       From/To boxes overflow their flex track and overlap. min-width:0 lets them shrink to fit. */
+    min-width: 0;
   }
 
   .filters__group:first-child {

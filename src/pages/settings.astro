@@ -2,7 +2,7 @@
 import AppShell from '../layouts/AppShell.astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
 import { getImportProgress } from '../lib/import';
-import { formatRelativeTime } from '../lib/format';
+import { formatRelativeTime, DISPLAY_TIME_ZONE } from '../lib/format';
 
 const env = Astro.locals.runtime.env;
 const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
@@ -50,17 +50,24 @@ const lastSynced = profile.last_synced_at ? new Date(profile.last_synced_at) : n
 const connectedAt = profile.connected_at ? new Date(profile.connected_at) : null;
 const now = new Date();
 
-// Absolute London-time stamp — SSR runs UTC on Cloudflare, so pin the zone rather than trust the
-// server locale, and the two-person UK household reads the times they expect.
+// Absolute AWST-time stamp — SSR runs UTC on Cloudflare, so pin the household zone (see
+// DISPLAY_TIME_ZONE) rather than trust the server locale.
 function absolute(date: Date): string {
   return date.toLocaleString('en-GB', {
-    timeZone: 'Europe/London',
+    timeZone: DISPLAY_TIME_ZONE,
     day: 'numeric',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+// Relative label for the "last …" stats — "just now" reads right when the last sync was seconds ago
+// ("now ago" doesn't); everything older is "{n}m/h/d ago".
+function agoLabel(date: Date): string {
+  const rel = formatRelativeTime(date, now);
+  return rel === 'now' ? 'just now' : `${rel} ago`;
 }
 
 interface Field {
@@ -126,7 +133,7 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
             <div class="stat__label">{field.label}</div>
             {field.date ? (
               <div class="stat__value">
-                <span class="stat__rel mono">{formatRelativeTime(field.date, now)} ago</span>
+                <span class="stat__rel mono">{agoLabel(field.date)}</span>
                 <span class="stat__abs mono">{absolute(field.date)}</span>
               </div>
             ) : (

@@ -164,6 +164,9 @@ const activeWindowLabel = WINDOWS.find((w) => w.value === activeWindow)?.label ?
 const hasPrev = summary.previous !== null;
 const compareText =
   activeWindow === 'custom' ? 'the previous period' : `the previous ${activeWindowLabel.toLowerCase()}`;
+// Phrase for "times played …" in the rankings legend — 'all' reads as "all-time", not "this all time".
+const playsPhrase =
+  activeWindow === 'custom' ? 'this range' : activeWindow === 'all' ? 'all-time' : `this ${activeWindowLabel.toLowerCase()}`;
 const heroEyebrow =
   activeWindow === 'all' ? 'All time' : activeWindow === 'custom' ? 'Custom range' : `Last ${activeWindowLabel.toLowerCase()}`;
 
@@ -357,7 +360,6 @@ const trendPoints = trend.map((point) => ({
                   <span class="drill-title">
                     Songs by <b>{drillArtist}</b>
                   </span>
-                  <span class="rank-sub mono">{hasMovement ? `▲▼ rank change vs. ${compareText}` : 'ranked by plays'}</span>
                 </div>
               ) : (
                 <div class="rank-head">
@@ -371,22 +373,24 @@ const trendPoints = trend.map((point) => ({
                       </a>
                     ))}
                   </div>
-                  <span class="rank-sub mono">{hasMovement ? `▲▼ rank change vs. ${compareText}` : 'ranked by plays'}</span>
                 </div>
               )
             }
 
-            {/* Legend: the two right-hand figures on every row mean different things — the count is
-                plays this window, the arrow is how far the entry moved in the ranking. */}
+            {/* Legend — the full key, shown on every sliced view in place of the old terse
+                "▲▼ rank change vs. …" sub-label. The row's count is plays in this window; the arrow
+                is how many places the entry moved in the ranking. */}
             <p class="rank-legend mono">
-              <b>N plays</b> = times played this {activeWindow === 'custom' ? 'range' : activeWindowLabel.toLowerCase()}
-              {hasMovement && (
+              <b>N plays</b> = times played {playsPhrase}
+              {hasMovement ? (
                 <Fragment>
                   {' · '}
                   <span class="up">▲</span>/<span class="down">▼</span> = places moved vs. {compareText}
                   {' · '}
                   <span class="rank-legend__new">NEW</span> = not ranked {compareText}
                 </Fragment>
+              ) : (
+                ' · ranked by plays'
               )}
             </p>
 
@@ -728,12 +732,6 @@ const trendPoints = trend.map((point) => ({
     color: var(--text-1);
     font-weight: 700;
     border-bottom-color: var(--gold);
-  }
-
-  .rank-sub {
-    font-size: 11px;
-    color: var(--text-3);
-    white-space: nowrap;
   }
 
   .drill-head {
