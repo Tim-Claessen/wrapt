@@ -1,0 +1,343 @@
+---
+// The dashboard's "#1 + rankings" block: the hero #1 card, the artists/tracks tabs (or the
+// drill-down back link when viewing one artist's tracks), the movement legend, and the ranked rows.
+// Server-rendered and link-driven — no client JS. Movement (NEW / ▲ / ▼) only shows when hasMovement
+// is true; the `all` window has no comparable prior period to diff against.
+import LeaderboardRow from './LeaderboardRow.astro';
+import { formatMinutes } from '../lib/format';
+import type { LeaderboardEntry, LeaderboardKind } from '../lib/leaderboard';
+
+interface Props {
+  entries: LeaderboardEntry[];
+  topEntry: LeaderboardEntry | null;
+  hasMovement: boolean;
+  rowShape: 'circle' | 'square';
+  kindSingular: string;
+  topMoveDelta: number | null;
+  drillArtist: string | null;
+  kinds: { value: LeaderboardKind; label: string }[];
+  activeKind: LeaderboardKind;
+  playsPhrase: string;
+  compareText: string;
+  topTileGradient: string;
+  buildHref: (overrides: Record<string, string | null>) => string;
+}
+const {
+  entries,
+  topEntry,
+  hasMovement,
+  rowShape,
+  kindSingular,
+  topMoveDelta,
+  drillArtist,
+  kinds,
+  activeKind,
+  playsPhrase,
+  compareText,
+  topTileGradient,
+  buildHref,
+} = Astro.props;
+
+// Per-row drill link: an artist row opens that artist's tracks. Track rows (and the drill-down view
+// itself) are leaves — no link. rowShape === 'circle' is exactly the artists view.
+function rowHref(entry: LeaderboardEntry): string | null {
+  if (drillArtist) return null;
+  if (rowShape === 'circle') return buildHref({ artist: entry.title });
+  return null;
+}
+---
+
+<section class="rank-sec">
+  {
+    topEntry && !drillArtist && (
+      <div class="one">
+        <div
+          class:list={['one__art', { 'one__art--circle': rowShape === 'circle' }]}
+          style={topEntry.image ? `background-image:url('${topEntry.image}')` : `background:${topTileGradient}`}
+        />
+        <div class="one__meta">
+          <span class="one__badge mono">Your #1 {kindSingular}</span>
+          <div class="one__name">{topEntry.title}</div>
+          <div class="one__sub">
+            {topEntry.playCount !== null && (
+              <span class="mono">
+                {topEntry.playCount} plays{topEntry.totalMs && topEntry.totalMs > 0 ? ` · ${formatMinutes(topEntry.totalMs)}` : ''}
+              </span>
+            )}
+            {topEntry.subtitle && <span class="one__by">{topEntry.subtitle}</span>}
+            {hasMovement && topEntry.prevRank === null && <span class="chip chip--new">NEW</span>}
+            {hasMovement && topMoveDelta !== null && topMoveDelta > 0 && (
+              <span class="chip chip--up">▲ {topMoveDelta} {topMoveDelta === 1 ? 'place' : 'places'}</span>
+            )}
+            {hasMovement && topMoveDelta !== null && topMoveDelta < 0 && (
+              <span class="chip chip--down">▼ {Math.abs(topMoveDelta)} {Math.abs(topMoveDelta) === 1 ? 'place' : 'places'}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  {
+    drillArtist ? (
+      <div class="drill-head">
+        <a class="drill-back mono" href={buildHref({ artist: null })}>‹ Back</a>
+        <span class="drill-title">
+          Songs by <b>{drillArtist}</b>
+        </span>
+      </div>
+    ) : (
+      <div class="rank-head">
+        <div class="rank-tabs mono">
+          {kinds.map((k) => (
+            <a
+              href={buildHref({ kind: k.value })}
+              class:list={['rank-tab', { 'is-active': k.value === activeKind }]}
+            >
+              {k.label}
+            </a>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  {/* Legend — the full key, shown on every sliced view in place of the old terse
+      "▲▼ rank change vs. …" sub-label. The row's count is plays in this window; the arrow
+      is how many places the entry moved in the ranking. */}
+  <p class="rank-legend mono">
+    <b>N plays</b> = times played {playsPhrase}
+    {hasMovement ? (
+      <Fragment>
+        {' · '}
+        <span class="up">▲</span>/<span class="down">▼</span> = places moved vs. {compareText}
+        {' · '}
+        <span class="rank-legend__new">NEW</span> = not ranked {compareText}
+      </Fragment>
+    ) : (
+      ' · ranked by plays'
+    )}
+  </p>
+
+  <div class="rank-rows">
+    {
+      entries.length > 0 ? (
+        entries.map((entry) => (
+          <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} href={rowHref(entry)} />
+        ))
+      ) : (
+        <p class="empty-note">
+          {drillArtist ? `No tracks for ${drillArtist} in this window.` : 'Nothing here yet for this window. Try a wider range.'}
+        </p>
+      )
+    }
+  </div>
+</section>
+
+<style>
+  .up {
+    color: var(--up);
+  }
+  .down {
+    color: var(--down);
+  }
+
+  /* ---- #1 card ---- */
+  .rank-sec {
+    margin-top: 34px;
+  }
+
+  .one {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(120deg, rgba(208, 162, 78, 0.1), rgba(255, 255, 255, 0.02) 55%);
+    border: 1px solid rgba(208, 162, 78, 0.25);
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 26px;
+  }
+
+  .one__art {
+    width: 88px;
+    height: 88px;
+    border-radius: 12px;
+    flex: 0 0 auto;
+    background-size: cover;
+    background-position: center;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .one__art--circle {
+    border-radius: 50%;
+  }
+
+  .one__meta {
+    min-width: 0;
+  }
+
+  .one__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  .one__badge::before {
+    content: '★';
+    font-size: 11px;
+  }
+
+  .one__name {
+    font-size: clamp(20px, 5.5vw, 28px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 5px 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .one__sub {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+
+  .one__by {
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  .chip--up {
+    color: var(--up);
+    background: rgba(139, 185, 150, 0.12);
+  }
+
+  .chip--down {
+    color: var(--down);
+    background: rgba(217, 154, 154, 0.12);
+  }
+
+  .chip--new {
+    color: var(--gold-on);
+    background: var(--gold);
+  }
+
+  /* ---- rankings ---- */
+  .rank-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .rank-tabs {
+    display: flex;
+    gap: 18px;
+  }
+
+  .rank-tab {
+    padding-bottom: 9px;
+    text-decoration: none;
+    color: var(--text-3);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-size: 13px;
+    transition: color 0.15s ease;
+  }
+
+  .rank-tab:hover {
+    color: var(--text-2);
+  }
+
+  .rank-tab.is-active {
+    color: var(--text-1);
+    font-weight: 700;
+    border-bottom-color: var(--gold);
+  }
+
+  .drill-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--hairline);
+    padding-bottom: 9px;
+  }
+
+  .drill-back {
+    font-size: 12.5px;
+    color: var(--gold);
+    text-decoration: none;
+    flex: 0 0 auto;
+  }
+
+  .drill-back:hover {
+    text-decoration: underline;
+  }
+
+  .drill-title {
+    font-size: 14px;
+    color: var(--text-1);
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drill-title b {
+    font-weight: 700;
+  }
+
+  .rank-legend {
+    margin-top: 12px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+  }
+
+  .rank-legend b {
+    color: var(--text-2);
+    font-weight: 700;
+  }
+
+  .rank-legend__new {
+    color: var(--gold);
+    font-weight: 700;
+  }
+
+  .rank-rows {
+    margin-top: 12px;
+  }
+
+  .empty-note {
+    margin-top: 20px;
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+</style>

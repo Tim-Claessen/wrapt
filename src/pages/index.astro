@@ -1,7 +1,9 @@
 ---
 import AppShell from '../layouts/AppShell.astro';
 import RangeToggle from '../components/RangeToggle.astro';
-import LeaderboardRow from '../components/LeaderboardRow.astro';
+import Leaderboard from '../components/Leaderboard.astro';
+import CustomRangeForm from '../components/CustomRangeForm.astro';
+import MinutesHero from '../components/MinutesHero.astro';
 import ImportCallout from '../components/ImportCallout.astro';
 import TrendChart from '../components/TrendChart.astro';
 import ListeningHeatmap from '../components/ListeningHeatmap.astro';
@@ -22,7 +24,7 @@ import {
   getRecentPlays,
   pickTrendBucket,
 } from '../lib/stats';
-import { computeDelta, formatCompactNumber, formatMinutes } from '../lib/format';
+import { computeDelta, formatCompactNumber } from '../lib/format';
 import { getImportProgress } from '../lib/import';
 import { parseEnumParam, parseSinceParam, parseUntilParam } from '../lib/params';
 
@@ -133,13 +135,6 @@ function buildHref(overrides: Record<string, string | null>): string {
 
 const rowShape = effectiveKind === 'artists' ? 'circle' : 'square';
 
-// Per-row drill link: an artist row opens that artist's tracks. Track rows are leaves — no link.
-function rowHref(entry: (typeof entries)[number]): string | null {
-  if (drillArtist) return null;
-  if (effectiveKind === 'artists') return buildHref({ artist: entry.title });
-  return null;
-}
-
 const historyDaysAgo = historySince
   ? Math.max(1, Math.round((Date.now() - historySince.getTime()) / (24 * 60 * 60 * 1000)))
   : null;
@@ -240,61 +235,21 @@ const trendPoints = trend.map((point) => ({
 
           {
             activeWindow === 'custom' && (
-              <form method="get" class="custom-range-form">
-                <input type="hidden" name="kind" value={activeKind} />
-                <input type="hidden" name="window" value="custom" />
-                <input type="date" name="since" value={sinceParam ?? ''} required class="custom-range-form__input" />
-                <input type="date" name="until" value={untilParam ?? ''} required class="custom-range-form__input" />
-                <button type="submit" class="custom-range-form__submit">
-                  Go
-                </button>
-              </form>
+              <CustomRangeForm activeKind={activeKind} sinceParam={sinceParam} untilParam={untilParam} />
             )
           }
 
           {/* HERO — minutes as the headline, over an album mosaic */}
-          <section class="hero">
-            <div class="hero__mosaic" aria-hidden="true">
-              {mosaicTiles.map((src, i) =>
-                src ? (
-                  <div class="hero__tile" style={`background-image:url('${src}')`} />
-                ) : (
-                  <div class="hero__tile" style={`background:${TILE_GRADIENTS[i % TILE_GRADIENTS.length]}`} />
-                ),
-              )}
-            </div>
-            <div class="hero__scrim" aria-hidden="true" />
-            <div class="hero__body">
-              <div class="eyebrow mono">{heroEyebrow}</div>
-              <div class="hero__figure">
-                <div class="hero__minutes mono">{rawMinutes.toLocaleString()}</div>
-                <div class="hero__unit">
-                  minutes listened
-                  <br />
-                  <b>{formatMinutes(summary.current.totalMs)}</b>
-                </div>
-              </div>
-
-              <div class="hero__stats">
-                {heroStats.map((s) => (
-                  <div class="ministat">
-                    <span class="ministat__v mono">{s.value}</span>
-                    <span class="ministat__l mono">{s.label}</span>
-                    {s.delta && s.delta.direction !== 'flat' && (
-                      <span class:list={['ministat__d', 'mono', s.delta.direction === 'up' ? 'up' : 'down']}>
-                        {s.delta.direction === 'up' ? '▲' : '▼'}
-                        {s.delta.percent === null ? ' new' : ` ${s.delta.percent}%`}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div class="hero__compare mono">
-                {hasPrev ? `▲▼ = % change in these totals vs. ${compareText}` : 'All of your listening — no prior period to compare.'}
-              </div>
-            </div>
-          </section>
+          <MinutesHero
+            mosaicTiles={mosaicTiles}
+            tileGradients={TILE_GRADIENTS}
+            eyebrow={heroEyebrow}
+            minutes={rawMinutes}
+            totalMs={summary.current.totalMs}
+            stats={heroStats}
+            hasPrev={hasPrev}
+            compareText={compareText}
+          />
 
           {
             historyDaysAgo !== null && historyDaysAgo < 7 && (
@@ -305,96 +260,21 @@ const trendPoints = trend.map((point) => ({
           }
 
           {/* #1 + rankings */}
-          <section class="rank-sec">
-            {
-              topEntry && !drillArtist && (
-                <div class="one">
-                  <div
-                    class:list={['one__art', { 'one__art--circle': rowShape === 'circle' }]}
-                    style={
-                      topEntry.image
-                        ? `background-image:url('${topEntry.image}')`
-                        : `background:${TILE_GRADIENTS[0]}`
-                    }
-                  />
-                  <div class="one__meta">
-                    <span class="one__badge mono">Your #1 {kindSingular}</span>
-                    <div class="one__name">{topEntry.title}</div>
-                    <div class="one__sub">
-                      {topEntry.playCount !== null && (
-                        <span class="mono">
-                          {topEntry.playCount} plays{topEntry.totalMs && topEntry.totalMs > 0 ? ` · ${formatMinutes(topEntry.totalMs)}` : ''}
-                        </span>
-                      )}
-                      {topEntry.subtitle && <span class="one__by">{topEntry.subtitle}</span>}
-                      {hasMovement && topEntry.prevRank === null && <span class="chip chip--new">NEW</span>}
-                      {hasMovement && topMoveDelta !== null && topMoveDelta > 0 && (
-                        <span class="chip chip--up">▲ {topMoveDelta} {topMoveDelta === 1 ? 'place' : 'places'}</span>
-                      )}
-                      {hasMovement && topMoveDelta !== null && topMoveDelta < 0 && (
-                        <span class="chip chip--down">▼ {Math.abs(topMoveDelta)} {Math.abs(topMoveDelta) === 1 ? 'place' : 'places'}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            }
-
-            {
-              drillArtist ? (
-                <div class="drill-head">
-                  <a class="drill-back mono" href={buildHref({ artist: null })}>‹ Back</a>
-                  <span class="drill-title">
-                    Songs by <b>{drillArtist}</b>
-                  </span>
-                </div>
-              ) : (
-                <div class="rank-head">
-                  <div class="rank-tabs mono">
-                    {KINDS.map((k) => (
-                      <a
-                        href={buildHref({ kind: k.value })}
-                        class:list={['rank-tab', { 'is-active': k.value === activeKind }]}
-                      >
-                        {k.label}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )
-            }
-
-            {/* Legend — the full key, shown on every sliced view in place of the old terse
-                "▲▼ rank change vs. …" sub-label. The row's count is plays in this window; the arrow
-                is how many places the entry moved in the ranking. */}
-            <p class="rank-legend mono">
-              <b>N plays</b> = times played {playsPhrase}
-              {hasMovement ? (
-                <Fragment>
-                  {' · '}
-                  <span class="up">▲</span>/<span class="down">▼</span> = places moved vs. {compareText}
-                  {' · '}
-                  <span class="rank-legend__new">NEW</span> = not ranked {compareText}
-                </Fragment>
-              ) : (
-                ' · ranked by plays'
-              )}
-            </p>
-
-            <div class="rank-rows">
-              {
-                entries.length > 0 ? (
-                  entries.map((entry) => (
-                    <LeaderboardRow entry={entry} showMovement={hasMovement} shape={rowShape} href={rowHref(entry)} />
-                  ))
-                ) : (
-                  <p class="empty-note">
-                    {drillArtist ? `No tracks for ${drillArtist} in this window.` : 'Nothing here yet for this window. Try a wider range.'}
-                  </p>
-                )
-              }
-            </div>
-          </section>
+          <Leaderboard
+            entries={entries}
+            topEntry={topEntry}
+            hasMovement={hasMovement}
+            rowShape={rowShape}
+            kindSingular={kindSingular}
+            topMoveDelta={topMoveDelta}
+            drillArtist={drillArtist}
+            kinds={KINDS}
+            activeKind={activeKind}
+            playsPhrase={playsPhrase}
+            compareText={compareText}
+            topTileGradient={TILE_GRADIENTS[0]}
+            buildHref={buildHref}
+          />
 
           {/* charts */}
           <section class="panels">
@@ -454,13 +334,6 @@ const trendPoints = trend.map((point) => ({
     color: var(--text-3);
   }
 
-  .up {
-    color: var(--up);
-  }
-  .down {
-    color: var(--down);
-  }
-
   .load-error {
     margin-top: 16px;
     font-size: 12.5px;
@@ -475,313 +348,6 @@ const trendPoints = trend.map((point) => ({
     margin-top: 12px;
     font-size: 11.5px;
     color: var(--text-3);
-  }
-
-  /* ---- hero ---- */
-  .hero {
-    position: relative;
-    overflow: hidden;
-    border-radius: 20px;
-    border: 1px solid var(--hairline);
-    margin-top: 20px;
-  }
-
-  .hero__mosaic {
-    position: absolute;
-    inset: 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-    grid-auto-rows: 72px;
-    opacity: 0.26;
-    filter: saturate(0.75);
-    z-index: 0;
-  }
-
-  .hero__tile {
-    background-size: cover;
-    background-position: center;
-  }
-
-  .hero__scrim {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    background:
-      linear-gradient(180deg, rgba(8, 8, 10, 0.62), rgba(8, 8, 10, 0.82) 55%, rgba(8, 8, 10, 0.97)),
-      radial-gradient(90% 120% at 12% 0%, rgba(208, 162, 78, 0.16), transparent 60%);
-  }
-
-  .hero__body {
-    position: relative;
-    z-index: 2;
-    padding: 24px 22px 26px;
-  }
-
-  .hero__figure {
-    display: flex;
-    align-items: flex-end;
-    gap: 14px;
-    flex-wrap: wrap;
-    margin-top: 14px;
-  }
-
-  .hero__minutes {
-    font-size: clamp(52px, 15vw, 104px);
-    font-weight: 700;
-    line-height: 0.85;
-    letter-spacing: -0.04em;
-    color: var(--text-1);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .hero__unit {
-    font-size: 14px;
-    color: var(--text-2);
-    padding-bottom: 8px;
-    line-height: 1.4;
-  }
-
-  .hero__unit b {
-    color: var(--gold);
-    font-weight: 700;
-  }
-
-  .hero__stats {
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-    margin-top: 22px;
-  }
-
-  .ministat {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .ministat__v {
-    font-size: 21px;
-    font-weight: 700;
-    color: var(--text-1);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .ministat__l {
-    font-size: 10px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-3);
-  }
-
-  .ministat__d {
-    font-size: 11px;
-    font-weight: 700;
-  }
-
-  .hero__compare {
-    margin-top: 18px;
-    font-size: 11px;
-    letter-spacing: 0.03em;
-    color: var(--text-3);
-  }
-
-  /* ---- #1 card ---- */
-  .rank-sec {
-    margin-top: 34px;
-  }
-
-  .one {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background: linear-gradient(120deg, rgba(208, 162, 78, 0.1), rgba(255, 255, 255, 0.02) 55%);
-    border: 1px solid rgba(208, 162, 78, 0.25);
-    border-radius: 16px;
-    padding: 16px;
-    margin-bottom: 26px;
-  }
-
-  .one__art {
-    width: 88px;
-    height: 88px;
-    border-radius: 12px;
-    flex: 0 0 auto;
-    background-size: cover;
-    background-position: center;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  }
-
-  .one__art--circle {
-    border-radius: 50%;
-  }
-
-  .one__meta {
-    min-width: 0;
-  }
-
-  .one__badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10.5px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--gold);
-  }
-
-  .one__badge::before {
-    content: '★';
-    font-size: 11px;
-  }
-
-  .one__name {
-    font-size: clamp(20px, 5.5vw, 28px);
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 5px 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .one__sub {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-
-  .one__by {
-    color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-family: 'Space Mono', monospace;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 999px;
-  }
-
-  .chip--up {
-    color: var(--up);
-    background: rgba(139, 185, 150, 0.12);
-  }
-
-  .chip--down {
-    color: var(--down);
-    background: rgba(217, 154, 154, 0.12);
-  }
-
-  .chip--new {
-    color: var(--gold-on);
-    background: var(--gold);
-  }
-
-  /* ---- rankings ---- */
-  .rank-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    border-bottom: 1px solid var(--hairline);
-  }
-
-  .rank-tabs {
-    display: flex;
-    gap: 18px;
-  }
-
-  .rank-tab {
-    padding-bottom: 9px;
-    text-decoration: none;
-    color: var(--text-3);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-    font-size: 13px;
-    transition: color 0.15s ease;
-  }
-
-  .rank-tab:hover {
-    color: var(--text-2);
-  }
-
-  .rank-tab.is-active {
-    color: var(--text-1);
-    font-weight: 700;
-    border-bottom-color: var(--gold);
-  }
-
-  .drill-head {
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    flex-wrap: wrap;
-    border-bottom: 1px solid var(--hairline);
-    padding-bottom: 9px;
-  }
-
-  .drill-back {
-    font-size: 12.5px;
-    color: var(--gold);
-    text-decoration: none;
-    flex: 0 0 auto;
-  }
-
-  .drill-back:hover {
-    text-decoration: underline;
-  }
-
-  .drill-title {
-    font-size: 14px;
-    color: var(--text-1);
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .drill-title b {
-    font-weight: 700;
-  }
-
-  .rank-legend {
-    margin-top: 12px;
-    font-size: 10.5px;
-    line-height: 1.5;
-    letter-spacing: 0.02em;
-    color: var(--text-3);
-  }
-
-  .rank-legend b {
-    color: var(--text-2);
-    font-weight: 700;
-  }
-
-  .rank-legend__new {
-    color: var(--gold);
-    font-weight: 700;
-  }
-
-  .rank-rows {
-    margin-top: 12px;
-  }
-
-  .empty-note {
-    margin-top: 20px;
-    font-size: 14px;
-    color: var(--text-2);
-    line-height: 1.5;
   }
 
   /* ---- panels ---- */
@@ -805,40 +371,6 @@ const trendPoints = trend.map((point) => ({
     font-weight: 600;
     color: var(--text-1);
     margin-bottom: 12px;
-  }
-
-  /* ---- forms ---- */
-  .custom-range-form {
-    margin-top: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .custom-range-form__input {
-    flex: 1 1 120px;
-    min-width: 0;
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 10px;
-    padding: 8px;
-    color: var(--text-1);
-    font-family: 'Space Mono', monospace;
-    font-size: 12.5px;
-  }
-
-  .custom-range-form__submit {
-    flex: 0 0 auto;
-    background: var(--gold);
-    color: var(--gold-on);
-    border: 0;
-    border-radius: 10px;
-    padding: 8px 14px;
-    font-weight: 700;
-    font-size: 12.5px;
-    font-family: inherit;
-    cursor: pointer;
   }
 
   @media (min-width: 760px) {

@@ -1,0 +1,189 @@
+---
+// The dashboard hero: minutes-listened as the headline figure over an album-art mosaic, with the
+// window eyebrow, the mini stat tiles (plays/artists/tracks/active days + their deltas), and the
+// compare caption. Purely presentational — all figures are computed by the page and passed in.
+import { formatMinutes, type Delta } from '../lib/format';
+
+interface HeroStat {
+  label: string;
+  value: string;
+  delta: Delta | null;
+}
+interface Props {
+  mosaicTiles: (string | null)[];
+  tileGradients: string[];
+  eyebrow: string;
+  minutes: number;
+  totalMs: number;
+  stats: HeroStat[];
+  hasPrev: boolean;
+  compareText: string;
+}
+const { mosaicTiles, tileGradients, eyebrow, minutes, totalMs, stats, hasPrev, compareText } = Astro.props;
+---
+
+<section class="hero">
+  <div class="hero__mosaic" aria-hidden="true">
+    {mosaicTiles.map((src, i) =>
+      src ? (
+        <div class="hero__tile" style={`background-image:url('${src}')`} />
+      ) : (
+        <div class="hero__tile" style={`background:${tileGradients[i % tileGradients.length]}`} />
+      ),
+    )}
+  </div>
+  <div class="hero__scrim" aria-hidden="true" />
+  <div class="hero__body">
+    <div class="eyebrow mono">{eyebrow}</div>
+    <div class="hero__figure">
+      <div class="hero__minutes mono">{minutes.toLocaleString()}</div>
+      <div class="hero__unit">
+        minutes listened
+        <br />
+        <b>{formatMinutes(totalMs)}</b>
+      </div>
+    </div>
+
+    <div class="hero__stats">
+      {stats.map((s) => (
+        <div class="ministat">
+          <span class="ministat__v mono">{s.value}</span>
+          <span class="ministat__l mono">{s.label}</span>
+          {s.delta && s.delta.direction !== 'flat' && (
+            <span class:list={['ministat__d', 'mono', s.delta.direction === 'up' ? 'up' : 'down']}>
+              {s.delta.direction === 'up' ? '▲' : '▼'}
+              {s.delta.percent === null ? ' new' : ` ${s.delta.percent}%`}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+
+    <div class="hero__compare mono">
+      {hasPrev ? `▲▼ = % change in these totals vs. ${compareText}` : 'All of your listening — no prior period to compare.'}
+    </div>
+  </div>
+</section>
+
+<style>
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .up {
+    color: var(--up);
+  }
+  .down {
+    color: var(--down);
+  }
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    border: 1px solid var(--hairline);
+    margin-top: 20px;
+  }
+
+  .hero__mosaic {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    grid-auto-rows: 72px;
+    opacity: 0.26;
+    filter: saturate(0.75);
+    z-index: 0;
+  }
+
+  .hero__tile {
+    background-size: cover;
+    background-position: center;
+  }
+
+  .hero__scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background:
+      linear-gradient(180deg, rgba(8, 8, 10, 0.62), rgba(8, 8, 10, 0.82) 55%, rgba(8, 8, 10, 0.97)),
+      radial-gradient(90% 120% at 12% 0%, rgba(208, 162, 78, 0.16), transparent 60%);
+  }
+
+  .hero__body {
+    position: relative;
+    z-index: 2;
+    padding: 24px 22px 26px;
+  }
+
+  .hero__figure {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+
+  .hero__minutes {
+    font-size: clamp(52px, 15vw, 104px);
+    font-weight: 700;
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hero__unit {
+    font-size: 14px;
+    color: var(--text-2);
+    padding-bottom: 8px;
+    line-height: 1.4;
+  }
+
+  .hero__unit b {
+    color: var(--gold);
+    font-weight: 700;
+  }
+
+  .hero__stats {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 22px;
+  }
+
+  .ministat {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .ministat__v {
+    font-size: 21px;
+    font-weight: 700;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ministat__l {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .ministat__d {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .hero__compare {
+    margin-top: 18px;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    color: var(--text-3);
+  }
+</style>

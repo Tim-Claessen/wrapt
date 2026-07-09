@@ -1,0 +1,55 @@
+---
+// The dashboard's custom date-range picker, shown only when the "Custom" window is active. Plain GET
+// form — submitting reloads the page with ?since/?until, no client JS.
+import type { LeaderboardKind } from '../lib/leaderboard';
+
+interface Props {
+  activeKind: LeaderboardKind;
+  sinceParam: string | null;
+  untilParam: string | null;
+}
+const { activeKind, sinceParam, untilParam } = Astro.props;
+---
+
+<form method="get" class="custom-range-form">
+  <input type="hidden" name="kind" value={activeKind} />
+  <input type="hidden" name="window" value="custom" />
+  <input type="date" name="since" value={sinceParam ?? ''} required class="custom-range-form__input" />
+  <input type="date" name="until" value={untilParam ?? ''} required class="custom-range-form__input" />
+  <button type="submit" class="custom-range-form__submit">Go</button>
+</form>
+
+<style>
+  .custom-range-form {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .custom-range-form__input {
+    flex: 1 1 120px;
+    min-width: 0;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 8px;
+    color: var(--text-1);
+    font-family: 'Space Mono', monospace;
+    font-size: 12.5px;
+  }
+
+  .custom-range-form__submit {
+    flex: 0 0 auto;
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-weight: 700;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+</style>
