@@ -1,29 +1,16 @@
 ---
 import AppShell from '../layouts/AppShell.astro';
 import EmptyState from '../components/EmptyState.astro';
-import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
+import { requireProfile } from '../lib/auth';
 import { getPlaysHistorySince } from '../lib/leaderboard';
 import { getHistoryPage, getHistorySummary, type HistoryFilter } from '../lib/history';
 import { formatCompactNumber, formatMinutes, DISPLAY_TIME_ZONE } from '../lib/format';
 
-const env = Astro.locals.runtime.env;
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
-const {
-  data: { user },
-} = await supabase.auth.getUser();
-
-if (!user) return Astro.redirect('/login');
-
-const { data: profile } = await supabase
-  .from('spotify_profiles')
-  .select('id, display_name')
-  .eq('user_id', user.id)
-  .maybeSingle();
-
-if (!profile) return Astro.redirect('/connect');
+const gate = await requireProfile<{ id: string; display_name: string | null }>(Astro, 'id, display_name');
+if (gate instanceof Response) return gate;
+const { profile, service } = gate;
 
 const profileId = profile.id;
-const service = createSupabaseServiceClient(env);
 const url = Astro.url;
 
 const PAGE_SIZE = 50;

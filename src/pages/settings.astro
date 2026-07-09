@@ -1,27 +1,19 @@
 ---
 import AppShell from '../layouts/AppShell.astro';
-import { createSupabaseServerClient, createSupabaseServiceClient } from '../lib/supabase';
+import { requireProfile } from '../lib/auth';
 import { getImportProgress } from '../lib/import';
 import { formatRelativeTime, DISPLAY_TIME_ZONE } from '../lib/format';
 
-const env = Astro.locals.runtime.env;
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, env);
-const {
-  data: { user },
-} = await supabase.auth.getUser();
-
-if (!user) return Astro.redirect('/login');
-
-const { data: profile } = await supabase
-  .from('spotify_profiles')
-  .select('id, display_name, connected_at, last_synced_at')
-  .eq('user_id', user.id)
-  .maybeSingle();
-
-if (!profile) return Astro.redirect('/connect');
+const gate = await requireProfile<{
+  id: string;
+  display_name: string | null;
+  connected_at: string | null;
+  last_synced_at: string | null;
+}>(Astro, 'id, display_name, connected_at, last_synced_at');
+if (gate instanceof Response) return gate;
+const { profile, service } = gate;
 
 const profileId = profile.id;
-const service = createSupabaseServiceClient(env);
 
 // Newest insert time of a play from each source. `created_at` is the wall-clock ingest time, so
 // these are the real "last time something landed" markers — distinct from last_synced_at (which

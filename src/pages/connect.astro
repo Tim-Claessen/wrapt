@@ -1,13 +1,10 @@
 ---
 import AppShell from '../layouts/AppShell.astro';
-import { createSupabaseServerClient } from '../lib/supabase';
+import { requireUser } from '../lib/auth';
 
-const supabase = createSupabaseServerClient(Astro.request, Astro.cookies, Astro.locals.runtime.env);
-const {
-  data: { user },
-} = await supabase.auth.getUser();
-
-if (!user) return Astro.redirect('/login');
+const gate = await requireUser(Astro);
+if (gate instanceof Response) return gate;
+const { user, supabase } = gate;
 
 const errorParam = Astro.url.searchParams.get('error');
 
