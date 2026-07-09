@@ -20,7 +20,9 @@ function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-// Output format: base64(iv) + "." + base64(ciphertext+tag)
+// Output format: "v1." + base64(iv) + "." + base64(ciphertext+tag). The v1 prefix lets a future key
+// rotation introduce a v2 scheme that coexists with existing v1 values, instead of forcing a
+// big-bang re-encrypt of every stored token.
 export async function encryptToken(plaintext: string, keyBase64: string): Promise<string> {
   const key = await importKey(keyBase64);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
@@ -29,11 +31,15 @@ export async function encryptToken(plaintext: string, keyBase64: string): Promis
     key,
     new TextEncoder().encode(plaintext),
   );
-  return `${toBase64(iv)}.${toBase64(new Uint8Array(ciphertext))}`;
+  return `v1.${toBase64(iv)}.${toBase64(new Uint8Array(ciphertext))}`;
 }
 
 export async function decryptToken(encrypted: string, keyBase64: string): Promise<string> {
-  const [ivPart, dataPart] = encrypted.split('.');
+  // Versioned format is `v1.<base64 iv>.<base64 ciphertext>`. Legacy values are unprefixed
+  // `<base64 iv>.<base64 ciphertext>` and are treated as v1 — same AES-GCM scheme, same key — so
+  // tokens stored before versioning keep decrypting with no migration.
+  const parts = encrypted.split('.');
+  const [ivPart, dataPart] = parts[0] === 'v1' ? parts.slice(1) : parts;
   if (!ivPart || !dataPart) throw new Error('Malformed encrypted token');
   const key = await importKey(keyBase64);
   const plaintext = await crypto.subtle.decrypt(
