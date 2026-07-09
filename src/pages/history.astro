@@ -5,6 +5,7 @@ import { requireProfile } from '../lib/auth';
 import { getPlaysHistorySince } from '../lib/leaderboard';
 import { getHistoryPage, getHistorySummary, type HistoryFilter } from '../lib/history';
 import { formatCompactNumber, formatMinutes, DISPLAY_TIME_ZONE } from '../lib/format';
+import { parsePageParam, parseSinceParam, parseUntilParam } from '../lib/params';
 
 const gate = await requireProfile<{ id: string; display_name: string | null }>(Astro, 'id, display_name');
 if (gate instanceof Response) return gate;
@@ -18,13 +19,12 @@ const PAGE_SIZE = 50;
 const sinceParam = url.searchParams.get('since');
 const untilParam = url.searchParams.get('until');
 const qParam = url.searchParams.get('q');
-const pageParam = Number(url.searchParams.get('page') ?? '1');
-const page = Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) : 1;
+const page = parsePageParam(url.searchParams.get('page'));
 const offset = (page - 1) * PAGE_SIZE;
 
 const filter: HistoryFilter = {
-  since: sinceParam ? new Date(sinceParam) : null,
-  until: untilParam ? new Date(`${untilParam}T23:59:59`) : null,
+  since: parseSinceParam(sinceParam),
+  until: parseUntilParam(untilParam),
   query: qParam,
 };
 const hasActiveFilter = Boolean(sinceParam || untilParam || (qParam && qParam.trim() !== ''));

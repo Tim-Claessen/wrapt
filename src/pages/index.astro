@@ -24,6 +24,7 @@ import {
 } from '../lib/stats';
 import { computeDelta, formatCompactNumber, formatMinutes } from '../lib/format';
 import { getImportProgress } from '../lib/import';
+import { parseEnumParam, parseSinceParam, parseUntilParam } from '../lib/params';
 
 const gate = await requireProfile<{ id: string; display_name: string | null }>(Astro, 'id, display_name');
 if (gate instanceof Response) return gate;
@@ -44,24 +45,24 @@ const WINDOWS: { value: LeaderboardWindow; label: string }[] = [
 ];
 
 const kindParam = url.searchParams.get('kind');
-const activeKind: LeaderboardKind = KINDS.some((k) => k.value === kindParam)
-  ? (kindParam as LeaderboardKind)
-  : 'artists';
+const activeKind = parseEnumParam<LeaderboardKind>(kindParam, KINDS.map((k) => k.value), 'artists');
 
 const windowParam = url.searchParams.get('window');
-const activeWindow: LeaderboardWindow = WINDOWS.some((w) => w.value === windowParam)
-  ? (windowParam as LeaderboardWindow)
-  : '30d';
+const activeWindow = parseEnumParam<LeaderboardWindow>(windowParam, WINDOWS.map((w) => w.value), '30d');
 
 // Drill-down: ?artist=<name> shows that one artist's tracks (the tracks leaderboard, filtered to one
 // artist). It forces the tracks view regardless of which kind tab is selected.
 const drillArtist = url.searchParams.get('artist');
 const effectiveKind: LeaderboardKind = drillArtist ? 'tracks' : activeKind;
 
+// Raw strings are still echoed into the custom-range form; parsed values (null when invalid) drive
+// the query, so a garbage ?since/?until degrades to the default window instead of erroring.
 const sinceParam = url.searchParams.get('since');
 const untilParam = url.searchParams.get('until');
-const customSince = activeWindow === 'custom' && sinceParam ? new Date(sinceParam) : undefined;
-const customUntil = activeWindow === 'custom' && untilParam ? new Date(`${untilParam}T23:59:59`) : undefined;
+const parsedSince = parseSinceParam(sinceParam);
+const parsedUntil = parseUntilParam(untilParam);
+const customSince = activeWindow === 'custom' && parsedSince ? parsedSince : undefined;
+const customUntil = activeWindow === 'custom' && parsedUntil ? parsedUntil : undefined;
 const hasCustomRange = Boolean(customSince && customUntil);
 // A custom window with no dates picked yet still needs *something* to query — default to the last
 // 7 days for data while the date form itself keeps showing so the user can refine it.
