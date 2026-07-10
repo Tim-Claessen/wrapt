@@ -70,8 +70,3 @@ wrangler secret put <NAME> -c workers/sync/wrangler.jsonc      # sync worker
 
   It prints before/after progress, then grinds through every `pending` track, sleeping through rate limits. Idempotent and resumable — safe to Ctrl-C and re-run (~2 tracks/sec un-throttled).
 - **Migrations.** The Supabase CLI isn't linked on this machine, so new migrations are hand-pasted into the Supabase Dashboard SQL editor in filename order (mirrored into `supabase/migrations/` for history). Check the dashboard, not just this repo, to know the live schema.
-
-### Outstanding manual steps
-
-- **Apply `supabase/migrations/20260709000005_awst_stats.sql`** in the Supabase Dashboard SQL editor if it hasn't been applied yet — it re-buckets the listening stats in AWST (`Australia/Perth`) so the heatmap/trends match the household's clock.
-- **Run `node scripts/backfill-enrichment.mjs`** to clear the imported album-art / artist-id backlog (resumable; roughly a few hours at ~2 tracks/sec for a large backlog).
