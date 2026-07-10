@@ -1,0 +1,624 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import EmptyState from '../components/EmptyState.astro';
+import { requireProfile } from '../lib/auth';
+import { getAskRemaining } from '../lib/ask';
+
+const gate = await requireProfile<{ id: string; display_name: string | null }>(Astro, 'id, display_name');
+if (gate instanceof Response) return gate;
+const { profile, service } = gate;
+
+const usage = await getAskRemaining(service, profile.id);
+
+const EXAMPLE_QUESTIONS = [
+  'Who did I listen to most this month?',
+  'How many minutes did I listen last week?',
+  'What new artists did I discover this year?',
+  'What do I skip the most?',
+];
+---
+
+<AppShell title="Ask" wide nav>
+  <div class="ask-page" data-remaining={usage.remaining} data-limit={usage.limit}>
+    <header class="ask-head">
+      <span class="eyebrow mono">Ask</span>
+      <h1 class="ask-title">Ask your listening anything.</h1>
+      <p class="ask-lede">Real answers from your own history — no vibes, just the numbers.</p>
+    </header>
+
+    <div class="tabs mono" role="tablist">
+      <button class="tab is-active" data-mode="ask" role="tab" aria-selected="true">Ask</button>
+      <button class="tab" data-mode="playlist" role="tab" aria-selected="false">Playlist</button>
+    </div>
+
+    <section id="panel-ask" class="mode">
+      <div id="chat-log" class="chat">
+        <div id="chat-empty" class="chat-empty">
+          <p class="chat-empty__hi mono">Try one of these →</p>
+          <div class="chips">
+            {EXAMPLE_QUESTIONS.map((q) => (
+              <button class="chip-q" data-q={q}>{q}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <form id="ask-form" class="composer" autocomplete="off">
+        <input
+          id="ask-input"
+          class="composer__input"
+          type="text"
+          name="question"
+          placeholder="Ask about your listening…"
+          maxlength="500"
+          aria-label="Ask about your listening"
+        />
+        <button id="ask-send" class="composer__send mono" type="submit">Ask</button>
+      </form>
+      <p id="ask-hint" class="composer__hint mono">{usage.remaining} of {usage.limit} questions left today.</p>
+    </section>
+
+    <section id="panel-playlist" class="mode" hidden>
+      <EmptyState
+        title="Playlists are coming"
+        body="Soon you'll be able to spin up a playlist from a plain-English brief — “upbeat stuff I loved last summer.” Not wired up just yet."
+        hint="◷ coming in the next update"
+      />
+    </section>
+  </div>
+</AppShell>
+
+<script>
+  interface RichRow {
+    rank: number;
+    title: string;
+    subtitle: string | null;
+    metric: string;
+    image: string | null;
+  }
+  type Rich =
+    | { type: 'list'; title: string; shape: 'circle' | 'square'; rows: RichRow[] }
+    | { type: 'trend'; title: string; unit: string; points: { label: string; value: number }[] };
+  interface AskResponse {
+    answer?: string;
+    rich?: Rich | null;
+    remaining?: number;
+    capped?: boolean;
+    error?: string;
+  }
+
+  const GRADIENTS = [
+    'linear-gradient(145deg,#5b4a63,#241c2b)',
+    'linear-gradient(145deg,#3f5450,#141d1a)',
+    'linear-gradient(145deg,#63514a,#2a1f1a)',
+    'linear-gradient(145deg,#4a5566,#191f28)',
+    'linear-gradient(145deg,#665a45,#282116)',
+    'linear-gradient(145deg,#54486a,#201a2b)',
+  ];
+
+  const root = document.querySelector('.ask-page') as HTMLElement;
+  const chatLog = document.getElementById('chat-log') as HTMLDivElement;
+  const chatEmpty = document.getElementById('chat-empty') as HTMLDivElement;
+  const form = document.getElementById('ask-form') as HTMLFormElement;
+  const input = document.getElementById('ask-input') as HTMLInputElement;
+  const sendBtn = document.getElementById('ask-send') as HTMLButtonElement;
+  const hint = document.getElementById('ask-hint') as HTMLParagraphElement;
+  const limit = Number(root.dataset.limit ?? '50');
+  let remaining = Number(root.dataset.remaining ?? '0');
+  let busy = false;
+
+  // ---- mode tabs (Ask / Playlist) ----
+  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
+  const panelAsk = document.getElementById('panel-ask') as HTMLElement;
+  const panelPlaylist = document.getElementById('panel-playlist') as HTMLElement;
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => {
+      const mode = tab.dataset.mode;
+      for (const t of tabs) {
+        const active = t === tab;
+        t.classList.toggle('is-active', active);
+        t.setAttribute('aria-selected', String(active));
+      }
+      panelAsk.hidden = mode !== 'ask';
+      panelPlaylist.hidden = mode !== 'playlist';
+    });
+  }
+
+  // ---- helpers ----
+  function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function scrollToEnd(): void {
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function updateHint(): void {
+    hint.textContent =
+      remaining <= 0
+        ? "That's today's questions used up — back tomorrow."
+        : `${remaining} of ${limit} question${remaining === 1 ? '' : 's'} left today.`;
+  }
+
+  function addUserBubble(text: string): void {
+    const msg = el('div', 'msg msg--user');
+    msg.appendChild(el('div', 'bubble', text));
+    chatLog.appendChild(msg);
+    scrollToEnd();
+  }
+
+  function addThinking(): HTMLDivElement {
+    const msg = el('div', 'msg msg--bot');
+    const bubble = el('div', 'bubble bubble--thinking');
+    bubble.appendChild(el('span', 'mono', 'reading your history…'));
+    msg.appendChild(bubble);
+    chatLog.appendChild(msg);
+    scrollToEnd();
+    return msg;
+  }
+
+  function buildListRich(rich: Extract<Rich, { type: 'list' }>): HTMLElement {
+    const wrap = el('div', 'rich rich--list');
+    wrap.appendChild(el('div', 'rich__title mono', rich.title));
+    const rows = el('div', 'rich__rows');
+    rich.rows.slice(0, 10).forEach((r, i) => {
+      const row = el('div', 'rrow');
+      row.style.animationDelay = `${i * 45}ms`;
+      row.appendChild(el('div', 'rrow__rank mono', String(r.rank)));
+      const art = el('div', `rrow__art${rich.shape === 'circle' ? ' rrow__art--circle' : ''}`);
+      if (r.image) art.style.backgroundImage = `url('${r.image}')`;
+      else art.style.background = GRADIENTS[i % GRADIENTS.length];
+      row.appendChild(art);
+      const meta = el('div', 'rrow__meta');
+      meta.appendChild(el('div', 'rrow__name', r.title));
+      if (r.subtitle) meta.appendChild(el('div', 'rrow__sub', r.subtitle));
+      row.appendChild(meta);
+      row.appendChild(el('div', 'rrow__metric mono', r.metric));
+      rows.appendChild(row);
+    });
+    wrap.appendChild(rows);
+    return wrap;
+  }
+
+  function buildTrendRich(rich: Extract<Rich, { type: 'trend' }>): HTMLElement {
+    const wrap = el('div', 'rich rich--trend');
+    wrap.appendChild(el('div', 'rich__title mono', rich.title));
+    const pts = rich.points;
+    const H = 54;
+    const max = Math.max(...pts.map((p) => p.value), 1);
+    const n = pts.length;
+    const xPct = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
+    const yPx = (v: number) => 6 + (1 - v / max) * (H - 6);
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${xPct(i).toFixed(2)} ${yPx(p.value).toFixed(2)}`).join(' ');
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'spark');
+    svg.setAttribute('viewBox', `0 0 100 ${H}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', `${rich.unit} over time`);
+
+    if (n > 0) {
+      const area = document.createElementNS(NS, 'path');
+      area.setAttribute('d', `${line} L${xPct(n - 1).toFixed(2)} ${H} L${xPct(0).toFixed(2)} ${H} Z`);
+      area.setAttribute('fill', 'rgba(208,162,78,0.18)');
+      svg.appendChild(area);
+      const path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', line);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'var(--gold)');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      path.setAttribute('stroke-linejoin', 'round');
+      path.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(path);
+    }
+    wrap.appendChild(svg);
+
+    if (n > 0) {
+      const axis = el('div', 'spark__axis mono');
+      axis.appendChild(el('span', undefined, pts[0].label));
+      axis.appendChild(el('span', undefined, pts[n - 1].label));
+      wrap.appendChild(axis);
+    }
+    return wrap;
+  }
+
+  function addBotAnswer(text: string, rich: Rich | null): void {
+    const msg = el('div', 'msg msg--bot');
+    msg.appendChild(el('div', 'bubble', text));
+    if (rich) {
+      if (rich.type === 'list' && rich.rows.length > 0) msg.appendChild(buildListRich(rich));
+      else if (rich.type === 'trend' && rich.points.length > 0) msg.appendChild(buildTrendRich(rich));
+    }
+    chatLog.appendChild(msg);
+    scrollToEnd();
+  }
+
+  function setBusy(state: boolean): void {
+    busy = state;
+    input.disabled = state;
+    sendBtn.disabled = state || remaining <= 0;
+    sendBtn.textContent = state ? '…' : 'Ask';
+  }
+
+  async function ask(question: string): Promise<void> {
+    if (busy || !question.trim()) return;
+    if (remaining <= 0) {
+      updateHint();
+      return;
+    }
+    chatEmpty.style.display = 'none';
+    addUserBubble(question);
+    input.value = '';
+    setBusy(true);
+    const thinking = addThinking();
+
+    try {
+      const res = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      });
+      const data = (await res.json().catch(() => ({}))) as AskResponse;
+      thinking.remove();
+
+      if (typeof data.remaining === 'number') remaining = data.remaining;
+      else if (!data.capped && res.ok) remaining = Math.max(remaining - 1, 0);
+
+      const answer = data.answer ?? "Something went wrong on my end — try that again in a moment.";
+      addBotAnswer(answer, data.rich ?? null);
+    } catch {
+      thinking.remove();
+      addBotAnswer("I couldn't reach the server just now — check your connection and try again.", null);
+    } finally {
+      updateHint();
+      setBusy(false);
+      if (remaining > 0) input.focus();
+    }
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void ask(input.value);
+  });
+
+  for (const chip of Array.from(document.querySelectorAll<HTMLButtonElement>('.chip-q'))) {
+    chip.addEventListener('click', () => {
+      input.value = chip.dataset.q ?? '';
+      void ask(input.value);
+    });
+  }
+
+  updateHint();
+  setBusy(false);
+</script>
+
+<style is:global>
+  /* Namespaced under .ask-page so these rules also style the chat bubbles created in client JS
+     (Astro's default scoped styles only reach server-rendered nodes, which the bubbles aren't). */
+  .ask-page .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .ask-page .ask-title {
+    margin: 6px 0 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+  }
+
+  .ask-page .ask-lede {
+    margin: 8px 0 0;
+    font-size: 14.5px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .ask-page .tabs {
+    display: inline-flex;
+    gap: 4px;
+    margin-top: 22px;
+    padding: 4px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+  }
+
+  .ask-page .tab {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-3);
+    font-size: 12.5px;
+    padding: 8px 18px;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+
+  .ask-page .tab:hover {
+    color: var(--text-2);
+  }
+
+  .ask-page .tab.is-active {
+    color: var(--gold-on);
+    background: var(--gold);
+    font-weight: 700;
+  }
+
+  .ask-page .mode {
+    margin-top: 22px;
+  }
+
+  /* ---- chat ---- */
+  .ask-page .chat {
+    min-height: 240px;
+    max-height: min(58vh, 560px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 4px 2px;
+  }
+
+  .ask-page .chat-empty {
+    margin: auto 0;
+    padding: 24px 4px;
+  }
+
+  .ask-page .chat-empty__hi {
+    font-size: 12px;
+    color: var(--text-3);
+    margin: 0 0 12px;
+  }
+
+  .ask-page .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ask-page .chip-q {
+    appearance: none;
+    text-align: left;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    color: var(--text-1);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.35;
+    padding: 10px 13px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .ask-page .chip-q:hover {
+    border-color: var(--gold);
+    transform: translateY(-1px);
+  }
+
+  .ask-page .msg {
+    display: flex;
+    animation: riseIn 0.28s ease both;
+  }
+
+  .ask-page .msg--user {
+    justify-content: flex-end;
+  }
+
+  .ask-page .msg--bot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .ask-page .bubble {
+    max-width: 86%;
+    font-size: 14.5px;
+    line-height: 1.5;
+    padding: 11px 15px;
+    border-radius: 16px;
+  }
+
+  .ask-page .msg--user .bubble {
+    background: var(--gold);
+    color: var(--gold-on);
+    border-bottom-right-radius: 5px;
+    font-weight: 500;
+  }
+
+  .ask-page .msg--bot .bubble {
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    color: var(--text-1);
+    border-bottom-left-radius: 5px;
+  }
+
+  .ask-page .bubble--thinking {
+    color: var(--text-3);
+    font-size: 12.5px;
+  }
+
+  .ask-page .bubble--thinking .mono {
+    background: linear-gradient(90deg, var(--text-3), var(--text-1), var(--text-3));
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: askShimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes askShimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* ---- rich blocks ---- */
+  .ask-page .rich {
+    width: 100%;
+    max-width: 440px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .ask-page .rich__title {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 12px;
+  }
+
+  .ask-page .rich__rows {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .ask-page .rrow {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    animation: riseIn 0.3s ease both;
+  }
+
+  .ask-page .rrow__rank {
+    flex: 0 0 18px;
+    text-align: right;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .ask-page .rrow__art {
+    flex: 0 0 38px;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background-size: cover;
+    background-position: center;
+  }
+
+  .ask-page .rrow__art--circle {
+    border-radius: 50%;
+  }
+
+  .ask-page .rrow__meta {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .ask-page .rrow__name {
+    font-size: 13.5px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ask-page .rrow__sub {
+    font-size: 11.5px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ask-page .rrow__metric {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--text-2);
+    text-align: right;
+  }
+
+  .ask-page .spark {
+    display: block;
+    width: 100%;
+    height: 54px;
+  }
+
+  .ask-page .spark__axis {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 5px;
+    font-size: 8.5px;
+    color: var(--text-3);
+  }
+
+  /* ---- composer ---- */
+  .ask-page .composer {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .ask-page .composer__input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+    padding: 13px 15px;
+    color: var(--text-1);
+    font-family: inherit;
+    font-size: 14.5px;
+  }
+
+  .ask-page .composer__input:focus {
+    outline: none;
+    border-color: var(--gold);
+  }
+
+  .ask-page .composer__input::placeholder {
+    color: var(--text-3);
+  }
+
+  .ask-page .composer__send {
+    flex: 0 0 auto;
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    border-radius: 13px;
+    padding: 0 20px;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .ask-page .composer__send:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .ask-page .composer__hint {
+    margin: 10px 0 0;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  @keyframes riseIn {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+</style>

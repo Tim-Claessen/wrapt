@@ -8,6 +8,13 @@
 		"directory": "./dist",
 		"binding": "ASSETS"
 	},
+	// Workers AI, powering /ask. In production this binding must ALSO be added in the Cloudflare
+	// Pages dashboard (Settings → Functions → Bindings → add "Workers AI", variable name AI) — Pages
+	// doesn't read this file for bindings. Here it's what gives `locals.runtime.env.AI` to `astro dev`
+	// (via @astrojs/cloudflare's platform proxy) and what `wrangler types` reads to type Env.AI.
+	"ai": {
+		"binding": "AI"
+	},
 	"observability": {
 		"enabled": true
 	}

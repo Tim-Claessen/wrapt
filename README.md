@@ -1,6 +1,6 @@
 # Wrapt
 
-A private Spotify listening dashboard for a two-person household — "Wrapped, all year round." Minutes listened, artist/track leaderboards with week-over-week movement, a full play-history log, and imported Extended Streaming History. Built with Astro + vanilla CSS/JS on Cloudflare Pages and Supabase.
+A private Spotify listening dashboard for a two-person household — "Wrapped, all year round." Minutes listened, artist/track leaderboards with week-over-week movement, a full play-history log, imported Extended Streaming History, and an **Ask** page that answers natural-language questions about your own listening (grounded in your real `plays` data via Cloudflare Workers AI). Built with Astro + vanilla CSS/JS on Cloudflare Pages and Supabase.
 
 This README covers running and operating the app. For architecture, data model, design tokens, and build-time constraints (Spotify API limits, the Astro/Cloudflare version pin, security invariants), see [`CLAUDE.md`](CLAUDE.md).
 
@@ -19,7 +19,9 @@ This README covers running and operating the app. For architecture, data model, 
    - `.dev.vars` (Wrangler-loaded, used for `locals.runtime.env` during `astro dev`)
 
    Required vars: `SPOTIFY_CLIENT_ID`, `SPOTIFY_REDIRECT_URI` (`http://127.0.0.1:4321/api/auth/callback` locally), `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `TOKEN_ENC_KEY` (base64-encoded 32-byte AES-GCM key).
-3. After adding a new var to either file, run `npm run generate-types` (`wrangler types`) to keep `worker-configuration.d.ts` in sync.
+
+   The **Ask** page needs the Workers AI binding, not an env var: it's declared as `"ai": { "binding": "AI" }` in `wrangler.jsonc`, which is what gives `locals.runtime.env.AI` to `npm run dev` (via `@astrojs/cloudflare`'s platform proxy). Local `env.AI.run()` calls proxy to the **real** Workers AI over the network, so `wrangler` must be authenticated (it already is on this machine — `wrangler whoami`). No extra `.env`/`.dev.vars` entry is required for it.
+3. After adding a new var to either file, run `npm run generate-types` (`wrangler types`) to keep `worker-configuration.d.ts` in sync. (This also picks up new bindings like `AI` from `wrangler.jsonc`.)
 4. `npm run dev` — serves at `http://127.0.0.1:4321`.
 5. `npm run check` (astro check) and `npm run build` should both pass before pushing — CI runs them on every push/PR to `main`.
 
@@ -49,6 +51,8 @@ wrangler pages secret put <NAME> --project-name wrapt          # Pages app
 wrangler secret put <NAME> -c workers/sync/wrangler.jsonc      # sync worker
 ```
 
+**Workers AI binding (Ask page).** Unlike the secrets above, the `AI` binding is not set via the CLI — add it once in the Cloudflare Pages dashboard: **wrapt → Settings → Functions → Bindings → Add → Workers AI**, with variable name **`AI`**. Pages doesn't read `wrangler.jsonc` for bindings, so this dashboard step is required for `/ask` to work in production (the `wrangler.jsonc` entry only covers local `npm run dev`). Model is chosen in `src/lib/llm.ts` (`WORKERS_AI_MODEL`); swapping the provider to the Anthropic API later is a rewrite of that one module plus one secret.
+
 ## Ops runbook
 
 - **Spotify Premium dependency.** The Spotify app dies if the developer-account holder's Premium subscription lapses — the whole dashboard stops working for every allowlisted user, not just that one account. Don't let it lapse.
@@ -69,4 +73,5 @@ wrangler secret put <NAME> -c workers/sync/wrangler.jsonc      # sync worker
   ```
 
   It prints before/after progress, then grinds through every `pending` track, sleeping through rate limits. Idempotent and resumable — safe to Ctrl-C and re-run (~2 tracks/sec un-throttled).
+- **Ask (AI) usage cap.** `/ask` is capped at **50 questions per profile per day** (resets at AWST midnight), counted in the `ai_usage` table via the `bump_ai_usage` RPC. The remaining count shows quietly on `/settings`. To change the cap, edit `ASK_DAILY_LIMIT` in `src/lib/ask.ts`. Cost is Cloudflare Workers AI inference (metered on your Cloudflare account); the cap is the guardrail.
 - **Migrations.** The Supabase CLI isn't linked on this machine, so new migrations are hand-pasted into the Supabase Dashboard SQL editor in filename order (mirrored into `supabase/migrations/` for history). Check the dashboard, not just this repo, to know the live schema.

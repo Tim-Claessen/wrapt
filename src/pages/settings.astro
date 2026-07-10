@@ -2,6 +2,7 @@
 import AppShell from '../layouts/AppShell.astro';
 import { requireProfile } from '../lib/auth';
 import { getImportProgress } from '../lib/import';
+import { getAskRemaining } from '../lib/ask';
 import { formatRelativeTime, DISPLAY_TIME_ZONE } from '../lib/format';
 
 const gate = await requireProfile<{
@@ -32,10 +33,11 @@ async function latestCreatedAt(source: 'import' | 'live'): Promise<Date | null> 
   return data ? new Date(data.created_at as string) : null;
 }
 
-const [lastImport, lastLiveAdd, importProgress] = await Promise.all([
+const [lastImport, lastLiveAdd, importProgress, askUsage] = await Promise.all([
   latestCreatedAt('import'),
   latestCreatedAt('live'),
   getImportProgress(service, profileId),
+  getAskRemaining(service, profileId),
 ]);
 
 const lastSynced = profile.last_synced_at ? new Date(profile.last_synced_at) : null;
@@ -135,6 +137,9 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
           </div>
         ))
       }
+      <p class="card__note mono">
+        Ask questions today · {askUsage.used}/{askUsage.limit} used ({askUsage.remaining} left)
+      </p>
     </section>
 
     <section class="card">
