@@ -1,4 +1,4 @@
--- spotify_profiles: one row per authorised user's Spotify connection (SDD §3).
+-- spotify_profiles: one row per authorised user's Spotify connection (see CLAUDE.md).
 create table if not exists public.spotify_profiles (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null unique references auth.users (id) on delete cascade,
