@@ -7,7 +7,7 @@ import AppShell from '../layouts/AppShell.astro';
 import LeaderboardRow from '../components/LeaderboardRow.astro';
 import EmptyState from '../components/EmptyState.astro';
 import { requireProfile } from '../lib/auth';
-import { searchArtists, getArtistSummary } from '../lib/artist';
+import { searchArtists, getArtistSummary, getRandomArtists } from '../lib/artist';
 import { getLeaderboard } from '../lib/leaderboard';
 import { formatCompactNumber, formatMinutes, DISPLAY_TIME_ZONE } from '../lib/format';
 
@@ -25,6 +25,11 @@ if (!nameParam && qParam) {
   if (matches.length === 1) {
     return Astro.redirect(`/artist?name=${encodeURIComponent(matches[0].artistName)}`);
   }
+}
+
+let randomArtists: Awaited<ReturnType<typeof getRandomArtists>> = [];
+if (!nameParam && !qParam) {
+  randomArtists = await getRandomArtists(service, profile.id, 10);
 }
 
 let summary: Awaited<ReturnType<typeof getArtistSummary>> = null;
@@ -70,9 +75,29 @@ function absolute(date: Date): string {
         placeholder="Search an artist…"
         class="search__input mono"
         autofocus
+        required
+        minlength="2"
       />
       <button type="submit" class="search__submit">Search</button>
     </form>
+
+    {
+      !nameParam && !qParam && randomArtists.length > 0 && (
+        <section class="chips">
+          <p class="chips__label mono">Or jump to one you've played</p>
+          <div class="chips__list">
+            {randomArtists.map((a) => (
+              <a href={`/artist?name=${encodeURIComponent(a.artistName)}`} class="chip">
+                <div class="chip__art">
+                  {a.image ? <img src={a.image} alt="" loading="lazy" /> : <div class="chip__art-fallback" />}
+                </div>
+                <span class="chip__name">{a.artistName}</span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )
+    }
 
     {
       nameParam && !summary && (
@@ -232,6 +257,69 @@ function absolute(date: Date): string {
     font-size: 12.5px;
     font-family: inherit;
     cursor: pointer;
+  }
+
+  /* ---- browse chips ---- */
+  .chips {
+    margin-top: 24px;
+  }
+
+  .chips__label {
+    font-size: 11.5px;
+    color: var(--text-3);
+    margin-bottom: 10px;
+  }
+
+  .chips__list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px 6px 6px;
+    border-radius: 999px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    text-decoration: none;
+    color: var(--text-1);
+    font-size: 13px;
+    transition: border-color 0.12s ease;
+  }
+
+  .chip:hover {
+    border-color: var(--gold);
+  }
+
+  .chip__art {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .chip__art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .chip__art-fallback {
+    width: 100%;
+    height: 100%;
+  }
+
+  .chip__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 160px;
   }
 
   /* ---- match list ---- */

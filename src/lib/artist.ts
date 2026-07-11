@@ -29,6 +29,27 @@ export async function searchArtists(
   }));
 }
 
+export interface ArtistChip {
+  artistName: string;
+  image: string | null;
+}
+
+export async function getRandomArtists(
+  supabase: SupabaseClient,
+  profileId: string,
+  limit = 10,
+): Promise<ArtistChip[]> {
+  const { data, error } = await supabase.rpc('artist_random_sample', {
+    p_profile_id: profileId,
+    p_limit: limit,
+  });
+  if (error) throw error;
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    artistName: row.artist_name as string,
+    image: (row.image as string | null) ?? null,
+  }));
+}
+
 export interface ArtistSummary {
   artistName: string;
   totalPlays: number;
