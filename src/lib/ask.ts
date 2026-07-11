@@ -23,6 +23,11 @@ const MAX_STEPS = 6; // model round-trips — a couple more than the tool budget
 const FALLBACK_ANSWER = "Hmm — I couldn't work that one out. Try rephrasing, or ask about your top artists, tracks, minutes, discoveries, or skips.";
 const CORRECTIVE_INSTRUCTION =
   'You answered without calling a tool. You may only state listening facts that come from a tool result. Call one of the available tools now, or if the question genuinely cannot be answered with them, say so plainly.';
+// Prefix for the user turn that carries tool results back to the model. Kept as a user message (not
+// role:'tool') because the live Workers AI binding rejects tool-role threading without matching tool
+// call ids ("8001: Invalid input") — verified against the model.
+const RESULTS_PREAMBLE =
+  'Here are the results of the tools you called. Answer my question using only these results — quote their numbers and names verbatim. Do not call a tool again for data you already have. If they do not answer the question, say so plainly.';
 
 // ---------------------------------------------------------------------------------------------------
 // Validation — every value the model sends is treated as hostile until checked.
@@ -452,10 +457,13 @@ export async function runAskAgent(params: {
 
     if (tools.length > 0 && resp.toolCalls.length > 0) {
       const calls = resp.toolCalls.slice(0, toolBudget);
+      // Echo the request as a plain assistant turn (keeps roles alternating), then feed every result
+      // back in one user turn — see RESULTS_PREAMBLE for why not role:'tool'.
       messages.push({
         role: 'assistant',
-        content: JSON.stringify(calls.map((c) => ({ name: c.name, arguments: c.arguments }))),
+        content: resp.text?.trim() || JSON.stringify(calls.map((c) => ({ name: c.name, arguments: c.arguments }))),
       });
+      const toolResults: { tool: string; output: unknown }[] = [];
       for (const call of calls) {
         toolBudget--;
         toolsUsed.push(call.name);
@@ -465,12 +473,13 @@ export async function runAskAgent(params: {
           if (outcome.rich) rich = outcome.rich;
           output = outcome.result;
         } catch (err) {
-          // Validation failures and unknown tools are reported back to the model as tool output so it
-          // can correct itself; real DB errors surface as a generic failure (never leak internals).
+          // Validation failures and unknown tools are reported back to the model so it can correct
+          // itself; real DB errors surface as a generic failure (never leak internals).
           output = err instanceof ToolValidationError ? { error: err.message } : { error: 'tool_unavailable' };
         }
-        messages.push({ role: 'tool', content: JSON.stringify({ tool: call.name, output }) });
+        toolResults.push({ tool: call.name, output });
       }
+      messages.push({ role: 'user', content: `${RESULTS_PREAMBLE}\n\n${JSON.stringify({ toolResults })}` });
       continue;
     }
 
@@ -482,6 +491,7 @@ export async function runAskAgent(params: {
     if (toolsUsed.length === 0) {
       if (!correctiveTried) {
         correctiveTried = true;
+        messages.push({ role: 'assistant', content: text || '…' });
         messages.push({ role: 'user', content: CORRECTIVE_INSTRUCTION });
         continue;
       }
