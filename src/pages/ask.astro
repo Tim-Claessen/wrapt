@@ -9,13 +9,6 @@ if (gate instanceof Response) return gate;
 const { profile, service } = gate;
 
 const usage = await getAskRemaining(service, profile.id);
-
-const EXAMPLE_QUESTIONS = [
-  'Who did I listen to most this month?',
-  'How many minutes did I listen last week?',
-  'What new artists did I discover this year?',
-  'What do I skip the most?',
-];
 ---
 
 <AppShell title="Ask" wide nav>
@@ -32,30 +25,23 @@ const EXAMPLE_QUESTIONS = [
     </div>
 
     <section id="panel-ask" class="mode">
-      <div id="chat-log" class="chat">
-        <div id="chat-empty" class="chat-empty">
-          <p class="chat-empty__hi mono">Try one of these →</p>
-          <div class="chips">
-            {EXAMPLE_QUESTIONS.map((q) => (
-              <button class="chip-q" data-q={q}>{q}</button>
-            ))}
-          </div>
-        </div>
-      </div>
+      <div id="ask-body" class="ask-body">
+        <div id="chat-log" class="chat"></div>
 
-      <form id="ask-form" class="composer" autocomplete="off">
-        <input
-          id="ask-input"
-          class="composer__input"
-          type="text"
-          name="question"
-          placeholder="Ask about your listening…"
-          maxlength="500"
-          aria-label="Ask about your listening"
-        />
-        <button id="ask-send" class="composer__send mono" type="submit">Ask</button>
-      </form>
-      <p id="ask-hint" class="composer__hint mono">{usage.remaining} of {usage.limit} questions left today.</p>
+        <form id="ask-form" class="composer" autocomplete="off">
+          <input
+            id="ask-input"
+            class="composer__input"
+            type="text"
+            name="question"
+            placeholder="Ask about your listening…"
+            maxlength="500"
+            aria-label="Ask about your listening"
+          />
+          <button id="ask-send" class="composer__send mono" type="submit">Ask</button>
+        </form>
+        <p id="ask-hint" class="composer__hint mono">{usage.remaining} of {usage.limit} questions left today.</p>
+      </div>
     </section>
 
     <section id="panel-playlist" class="mode" hidden>
@@ -79,8 +65,8 @@ const EXAMPLE_QUESTIONS = [
   }
 
   const root = document.querySelector('.ask-page') as HTMLElement;
+  const askBody = document.getElementById('ask-body') as HTMLDivElement;
   const chatLog = document.getElementById('chat-log') as HTMLDivElement;
-  const chatEmpty = document.getElementById('chat-empty') as HTMLDivElement;
   const form = document.getElementById('ask-form') as HTMLFormElement;
   const input = document.getElementById('ask-input') as HTMLInputElement;
   const sendBtn = document.getElementById('ask-send') as HTMLButtonElement;
@@ -197,7 +183,7 @@ const EXAMPLE_QUESTIONS = [
       updateHint();
       return;
     }
-    chatEmpty.style.display = 'none';
+    askBody.classList.add('has-messages');
     addUserBubble(question);
     input.value = '';
     setBusy(true);
@@ -231,13 +217,6 @@ const EXAMPLE_QUESTIONS = [
     event.preventDefault();
     void ask(input.value);
   });
-
-  for (const chip of Array.from(document.querySelectorAll<HTMLButtonElement>('.chip-q'))) {
-    chip.addEventListener('click', () => {
-      input.value = chip.dataset.q ?? '';
-      void ask(input.value);
-    });
-  }
 
   updateHint();
   setBusy(false);
@@ -304,52 +283,30 @@ const EXAMPLE_QUESTIONS = [
     margin-top: 22px;
   }
 
-  /* ---- chat ---- */
+  /* ---- chat ----
+     Before any question is asked, .ask-body centers the composer vertically in the space below
+     the header (an empty .chat contributes no height, so the composer + hint sit in the middle).
+     Once the first question lands, JS adds .has-messages, which drops the centering so the chat
+     log takes over the space above a bottom-anchored composer — the usual chat layout. */
+  .ask-page .ask-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 44vh;
+  }
+
+  .ask-page .ask-body.has-messages {
+    justify-content: flex-start;
+    min-height: 0;
+  }
+
   .ask-page .chat {
-    min-height: 240px;
     max-height: min(58vh, 560px);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
     padding: 4px 2px;
-  }
-
-  .ask-page .chat-empty {
-    margin: auto 0;
-    padding: 24px 4px;
-  }
-
-  .ask-page .chat-empty__hi {
-    font-size: 12px;
-    color: var(--text-3);
-    margin: 0 0 12px;
-  }
-
-  .ask-page .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .ask-page .chip-q {
-    appearance: none;
-    text-align: left;
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    color: var(--text-1);
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1.35;
-    padding: 10px 13px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: border-color 0.15s ease, transform 0.15s ease;
-  }
-
-  .ask-page .chip-q:hover {
-    border-color: var(--gold);
-    transform: translateY(-1px);
   }
 
   .ask-page .msg {

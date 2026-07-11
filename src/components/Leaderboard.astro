@@ -85,6 +85,9 @@ function rowHref(entry: LeaderboardEntry): string | null {
         <span class="drill-title">
           Songs by <b>{drillArtist}</b>
         </span>
+        <a class="drill-artist-link mono" href={`/artist?name=${encodeURIComponent(drillArtist)}`}>
+          Full artist page →
+        </a>
       </div>
     ) : (
       <div class="rank-head">
@@ -310,6 +313,18 @@ function rowHref(entry: LeaderboardEntry): string | null {
 
   .drill-title b {
     font-weight: 700;
+  }
+
+  .drill-artist-link {
+    font-size: 12px;
+    color: var(--gold);
+    text-decoration: none;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .drill-artist-link:hover {
+    text-decoration: underline;
   }
 
   .rank-legend {

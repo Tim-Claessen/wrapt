@@ -87,10 +87,7 @@ function whenParts(date: Date): { date: string; time: string } {
     <header class="hist__head">
       <span class="eyebrow mono">Play History</span>
       <h1 class="hist__title">Everything you've played</h1>
-      <p class="hist__lede">
-        Every logged play, newest first. Filter by date or search a song or artist.
-        Looking for one artist's whole story? <a href="/artist" class="hist__artist-link">Search their page →</a>
-      </p>
+      <p class="hist__lede">Every logged play, newest first. Filter by date or search a song or artist.</p>
     </header>
 
     {loadError && <p class="load-error mono">{loadError}</p>}
@@ -128,7 +125,7 @@ function whenParts(date: Date): { date: string; time: string } {
                   class="filters__input filters__input--wide"
                 />
               </div>
-              <div class="filters__dates">
+              <div class="filters__row">
                 <div class="filters__group">
                   <label class="filters__label mono" for="since">From</label>
                   <input id="since" type="date" name="since" value={sinceParam ?? ''} class="filters__input" />
@@ -137,12 +134,18 @@ function whenParts(date: Date): { date: string; time: string } {
                   <label class="filters__label mono" for="until">To</label>
                   <input id="until" type="date" name="until" value={untilParam ?? ''} class="filters__input" />
                 </div>
-              </div>
-              <div class="filters__actions">
-                <button type="submit" class="filters__submit">Apply</button>
-                {hasActiveFilter && (
-                  <a href={url.pathname} class="filters__clear mono">Clear</a>
-                )}
+                <div class="filters__group filters__group--actions">
+                  {/* Invisible label matching the real ones above From/To — gives this column the
+                      same label+gap+control block height so Apply lines up exactly with the date
+                      inputs once they're all in one row (see the >=640px rule below). */}
+                  <span class="filters__label filters__label--ghost mono" aria-hidden="true">&nbsp;</span>
+                  <div class="filters__actions">
+                    <button type="submit" class="filters__submit">Apply</button>
+                    {hasActiveFilter && (
+                      <a href={url.pathname} class="filters__clear mono">Clear</a>
+                    )}
+                  </div>
+                </div>
               </div>
             </form>
 
@@ -233,16 +236,6 @@ function whenParts(date: Date): { date: string; time: string } {
     line-height: 1.5;
   }
 
-  .hist__artist-link {
-    color: var(--gold);
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .hist__artist-link:hover {
-    text-decoration: underline;
-  }
-
   .load-error {
     margin-top: 16px;
     font-size: 12.5px;
@@ -282,10 +275,15 @@ function whenParts(date: Date): { date: string; time: string } {
   }
 
   /* ---- filters ----
-     Stacked full-width rows on narrow screens; From/To only sit side-by-side once there's enough
-     room (min-width breakpoint below) for native date inputs to render without their calendar icon
+     Stacked full-width rows on narrow screens; From/To/Apply only sit in one row once there's
+     enough room (breakpoint below) for native date inputs to render without their calendar icon
      overlapping the placeholder text — letting them shrink via flex-basis alone caused exactly that
-     overlap at in-between viewport widths. */
+     overlap at in-between viewport widths.
+
+     The Apply column gets an invisible label (`.filters__label--ghost`, same markup as the real
+     From/To labels) so all three columns share an identical label+gap+control block height —
+     that's what actually lines up Apply's middle with the date inputs' middles once they share a
+     row, not the align-items value itself. */
   .filters {
     margin-top: 20px;
     display: flex;
@@ -299,7 +297,7 @@ function whenParts(date: Date): { date: string; time: string } {
     gap: 5px;
   }
 
-  .filters__dates {
+  .filters__row {
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -312,12 +310,18 @@ function whenParts(date: Date): { date: string; time: string } {
     color: var(--text-3);
   }
 
+  .filters__label--ghost {
+    display: none;
+  }
+
   .filters__input {
     width: 100%;
+    height: 40px;
+    box-sizing: border-box;
     background: var(--surface-raised);
     border: 1px solid var(--hairline);
     border-radius: 10px;
-    padding: 9px 11px;
+    padding: 0 11px;
     color: var(--text-1);
     font-family: 'Space Mono', monospace;
     font-size: 12.5px;
@@ -327,51 +331,49 @@ function whenParts(date: Date): { date: string; time: string } {
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-
-  @media (min-width: 420px) {
-    .filters__dates {
-      flex-direction: row;
-    }
-
-    .filters__dates .filters__group {
-      flex: 1 1 0;
-      min-width: 0;
-    }
+    height: 40px;
   }
 
   @media (min-width: 640px) {
     .filters {
       flex-direction: row;
       flex-wrap: wrap;
-      align-items: flex-end;
     }
 
     .filters__group--search {
       flex: 1 1 100%;
     }
 
-    .filters__dates {
+    .filters__row {
       flex: 0 0 auto;
+      flex-direction: row;
+      align-items: center;
     }
 
-    .filters__dates .filters__group {
+    .filters__row .filters__group {
       /* Fixed width (not flex-basis-with-shrink) so this can never be squeezed narrower than a
          date input can render without the icon overlapping the text. */
       flex: 0 0 150px;
     }
 
-    .filters__actions {
+    .filters__group--actions {
       flex: 0 0 auto;
+    }
+
+    .filters__label--ghost {
+      display: block;
+      visibility: hidden;
     }
   }
 
   .filters__submit {
+    height: 40px;
+    box-sizing: border-box;
     background: var(--gold);
     color: var(--gold-on);
     border: 0;
     border-radius: 10px;
-    padding: 10px 18px;
+    padding: 0 18px;
     font-weight: 700;
     font-size: 12.5px;
     font-family: inherit;

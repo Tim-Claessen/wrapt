@@ -4,7 +4,6 @@ import RangeToggle from '../components/RangeToggle.astro';
 import Leaderboard from '../components/Leaderboard.astro';
 import CustomRangeForm from '../components/CustomRangeForm.astro';
 import MinutesHero from '../components/MinutesHero.astro';
-import ImportCallout from '../components/ImportCallout.astro';
 import TrendChart from '../components/TrendChart.astro';
 import ListeningHeatmap from '../components/ListeningHeatmap.astro';
 import EmptyState from '../components/EmptyState.astro';
@@ -25,7 +24,6 @@ import {
   pickTrendBucket,
 } from '../lib/stats';
 import { computeDelta, formatCompactNumber } from '../lib/format';
-import { getImportProgress } from '../lib/import';
 import { parseEnumParam, parseSinceParam, parseUntilParam } from '../lib/params';
 
 const gate = await requireProfile<{ id: string; display_name: string | null }>(Astro, 'id, display_name');
@@ -79,7 +77,6 @@ const trendBucket = pickTrendBucket(range);
 let hasMovement = false;
 let entries: Awaited<ReturnType<typeof getLeaderboard>>['entries'] = [];
 let historySince: Date | null = null;
-let importProgress: Awaited<ReturnType<typeof getImportProgress>> = { total: 0, done: 0, failed: 0, pending: 0 };
 let recentPlays: Awaited<ReturnType<typeof getRecentPlays>> = [];
 let summary: Awaited<ReturnType<typeof getListeningSummary>> = {
   current: { totalMs: 0, totalPlays: 0, distinctTracks: 0, distinctArtists: 0, activeDays: 0 },
@@ -96,7 +93,6 @@ try {
   [
     { hasMovement, entries },
     historySince,
-    importProgress,
     recentPlays,
     summary,
     trend,
@@ -113,7 +109,6 @@ try {
       limit: 10,
     }),
     getPlaysHistorySince(service, profile.id),
-    getImportProgress(service, profile.id),
     getRecentPlays(service, profile.id, 12),
     getListeningSummary(service, profile.id, range),
     getListeningTrend(service, profile.id, range, trendBucket),
@@ -205,10 +200,7 @@ const trendPoints = trend.map((point) => ({
 
 <AppShell title="Dashboard" wide nav>
   <div id="dashboard-content">
-    <div class="dash-head">
-      <span class="eyebrow mono">Hey, {profile.display_name ?? 'there'}</span>
-      <div class="dash-callout"><ImportCallout progress={importProgress} showEnrichmentProgress={false} /></div>
-    </div>
+    <span class="eyebrow mono">Hey, {profile.display_name ?? 'there'}</span>
 
     {loadError && <p class="load-error mono">{loadError}</p>}
 
@@ -314,19 +306,6 @@ const trendPoints = trend.map((point) => ({
 </script>
 
 <style>
-  .dash-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-
-  .dash-callout {
-    flex: 1 1 240px;
-    max-width: 340px;
-  }
-
   .eyebrow {
     font-size: 11px;
     letter-spacing: 0.15em;
@@ -371,11 +350,5 @@ const trendPoints = trend.map((point) => ({
     font-weight: 600;
     color: var(--text-1);
     margin-bottom: 12px;
-  }
-
-  @media (min-width: 760px) {
-    .panels {
-      grid-template-columns: 1.4fr 1fr;
-    }
   }
 </style>
