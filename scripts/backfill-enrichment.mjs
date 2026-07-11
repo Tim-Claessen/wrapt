@@ -10,6 +10,9 @@
 // Usage:   node scripts/backfill-enrichment.mjs
 // Reads DB creds, TOKEN_ENC_KEY and SPOTIFY_CLIENT_ID from .dev.vars in the repo root. Idempotent
 // and resumable — safe to stop (Ctrl-C) and re-run; it picks up wherever it left off.
+// If 10 minutes pass without resolving a single track (e.g. stuck in a 429 backoff loop), it gives
+// up and exits with code 3 — a distinct code so the .bat wrapper can auto-close instead of waiting
+// on a keypress, since this is meant to be safe to leave running unattended.
 
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
@@ -19,8 +22,18 @@ const API_BASE = 'https://api.spotify.com/v1';
 const SELECT_PAGE = 1000; // pending ids fetched per outer pass
 const PACING_MS = 200; // gap between track lookups — keeps under the dev-mode rate window
 const RATE_LIMIT_MAX_WAIT_S = 60;
+const STALL_TIMEOUT_MS = 10 * 60 * 1000; // give up if nothing resolves in this long (e.g. stuck in a 429 loop)
+const STALL_EXIT_CODE = 3; // distinct from 0 (done) / 1 (error) so the .bat can auto-close without a `pause`
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let lastResolvedAt = Date.now();
+function checkStall() {
+  if (Date.now() - lastResolvedAt > STALL_TIMEOUT_MS) {
+    console.error(`\n\nNo tracks resolved in the last ${Math.round(STALL_TIMEOUT_MS / 60000)} minutes — stopping.`);
+    process.exit(STALL_EXIT_CODE);
+  }
+}
 
 // ---- env ----
 const vars = {};
@@ -124,6 +137,7 @@ async function getTrack(trackId) {
       continue;
     }
     if (res.status === 429) {
+      checkStall();
       const wait = Math.min(Number(res.headers.get('Retry-After') ?? '1') || 1, RATE_LIMIT_MAX_WAIT_S);
       process.stdout.write(`\r  rate limited — waiting ${wait}s…            `);
       await sleep(wait * 1000);
@@ -156,6 +170,7 @@ for (;;) {
   if (batch.length === 0) break; // nothing left we haven't already attempted this run
 
   for (let i = 0; i < batch.length; i++) {
+    checkStall();
     const trackId = batch[i];
     handled.add(trackId);
     if (i > 0) await sleep(PACING_MS);
@@ -173,6 +188,7 @@ for (;;) {
           p_duration_ms: track.duration_ms,
         });
         resolved++;
+        lastResolvedAt = Date.now();
       }
     } catch (err) {
       // Transient (network/5xx) — leave it pending for a later pass, don't burn a failure attempt.
