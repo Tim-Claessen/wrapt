@@ -69,16 +69,7 @@ const EXAMPLE_QUESTIONS = [
 </AppShell>
 
 <script>
-  interface RichRow {
-    rank: number;
-    title: string;
-    subtitle: string | null;
-    metric: string;
-    image: string | null;
-  }
-  type Rich =
-    | { type: 'list'; title: string; shape: 'circle' | 'square'; rows: RichRow[] }
-    | { type: 'trend'; title: string; unit: string; points: { label: string; value: number }[] };
+  type Rich = { type: 'table'; title: string; columns: string[]; rows: string[][] };
   interface AskResponse {
     answer?: string;
     rich?: Rich | null;
@@ -86,15 +77,6 @@ const EXAMPLE_QUESTIONS = [
     capped?: boolean;
     error?: string;
   }
-
-  const GRADIENTS = [
-    'linear-gradient(145deg,#5b4a63,#241c2b)',
-    'linear-gradient(145deg,#3f5450,#141d1a)',
-    'linear-gradient(145deg,#63514a,#2a1f1a)',
-    'linear-gradient(145deg,#4a5566,#191f28)',
-    'linear-gradient(145deg,#665a45,#282116)',
-    'linear-gradient(145deg,#54486a,#201a2b)',
-  ];
 
   const root = document.querySelector('.ask-page') as HTMLElement;
   const chatLog = document.getElementById('chat-log') as HTMLDivElement;
@@ -160,81 +142,44 @@ const EXAMPLE_QUESTIONS = [
     return msg;
   }
 
-  function buildListRich(rich: Extract<Rich, { type: 'list' }>): HTMLElement {
-    const wrap = el('div', 'rich rich--list');
-    wrap.appendChild(el('div', 'rich__title mono', rich.title));
-    const rows = el('div', 'rich__rows');
-    rich.rows.slice(0, 10).forEach((r, i) => {
-      const row = el('div', 'rrow');
-      row.style.animationDelay = `${i * 45}ms`;
-      row.appendChild(el('div', 'rrow__rank mono', String(r.rank)));
-      const art = el('div', `rrow__art${rich.shape === 'circle' ? ' rrow__art--circle' : ''}`);
-      if (r.image) art.style.backgroundImage = `url('${r.image}')`;
-      else art.style.background = GRADIENTS[i % GRADIENTS.length];
-      row.appendChild(art);
-      const meta = el('div', 'rrow__meta');
-      meta.appendChild(el('div', 'rrow__name', r.title));
-      if (r.subtitle) meta.appendChild(el('div', 'rrow__sub', r.subtitle));
-      row.appendChild(meta);
-      row.appendChild(el('div', 'rrow__metric mono', r.metric));
-      rows.appendChild(row);
-    });
-    wrap.appendChild(rows);
-    return wrap;
+  // A numeric-looking cell (int/float, optionally with a %/comma) reads better in mono, like the
+  // rest of the app's figures.
+  function isNumericCell(v: string): boolean {
+    return /^-?[\d,]+(\.\d+)?%?$/.test(v.trim());
   }
 
-  function buildTrendRich(rich: Extract<Rich, { type: 'trend' }>): HTMLElement {
-    const wrap = el('div', 'rich rich--trend');
+  function buildTableRich(rich: Rich): HTMLElement {
+    const wrap = el('div', 'rich rich--table');
     wrap.appendChild(el('div', 'rich__title mono', rich.title));
-    const pts = rich.points;
-    const H = 54;
-    const max = Math.max(...pts.map((p) => p.value), 1);
-    const n = pts.length;
-    const xPct = (i: number) => (n <= 1 ? 50 : (i / (n - 1)) * 100);
-    const yPx = (v: number) => 6 + (1 - v / max) * (H - 6);
-    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${xPct(i).toFixed(2)} ${yPx(p.value).toFixed(2)}`).join(' ');
+    const scroll = el('div', 'rich__tablescroll');
+    const table = el('table', 'rtable');
 
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('class', 'spark');
-    svg.setAttribute('viewBox', `0 0 100 ${H}`);
-    svg.setAttribute('preserveAspectRatio', 'none');
-    svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', `${rich.unit} over time`);
+    const thead = el('thead');
+    const htr = el('tr');
+    for (const col of rich.columns) htr.appendChild(el('th', 'mono', col));
+    thead.appendChild(htr);
+    table.appendChild(thead);
 
-    if (n > 0) {
-      const area = document.createElementNS(NS, 'path');
-      area.setAttribute('d', `${line} L${xPct(n - 1).toFixed(2)} ${H} L${xPct(0).toFixed(2)} ${H} Z`);
-      area.setAttribute('fill', 'rgba(208,162,78,0.18)');
-      svg.appendChild(area);
-      const path = document.createElementNS(NS, 'path');
-      path.setAttribute('d', line);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', 'var(--gold)');
-      path.setAttribute('stroke-width', '2');
-      path.setAttribute('vector-effect', 'non-scaling-stroke');
-      path.setAttribute('stroke-linejoin', 'round');
-      path.setAttribute('stroke-linecap', 'round');
-      svg.appendChild(path);
-    }
-    wrap.appendChild(svg);
-
-    if (n > 0) {
-      const axis = el('div', 'spark__axis mono');
-      axis.appendChild(el('span', undefined, pts[0].label));
-      axis.appendChild(el('span', undefined, pts[n - 1].label));
-      wrap.appendChild(axis);
-    }
+    const tbody = el('tbody');
+    rich.rows.forEach((row, i) => {
+      const tr = el('tr');
+      tr.style.animationDelay = `${i * 35}ms`;
+      row.forEach((cell) => {
+        const td = el('td', isNumericCell(cell) ? 'mono rtable__num' : undefined, cell);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    scroll.appendChild(table);
+    wrap.appendChild(scroll);
     return wrap;
   }
 
   function addBotAnswer(text: string, rich: Rich | null): void {
     const msg = el('div', 'msg msg--bot');
     msg.appendChild(el('div', 'bubble', text));
-    if (rich) {
-      if (rich.type === 'list' && rich.rows.length > 0) msg.appendChild(buildListRich(rich));
-      else if (rich.type === 'trend' && rich.points.length > 0) msg.appendChild(buildTrendRich(rich));
-    }
+    if (rich && rich.type === 'table' && rich.rows.length > 0) msg.appendChild(buildTableRich(rich));
     chatLog.appendChild(msg);
     scrollToEnd();
   }
@@ -546,18 +491,48 @@ const EXAMPLE_QUESTIONS = [
     text-align: right;
   }
 
-  .ask-page .spark {
-    display: block;
-    width: 100%;
-    height: 54px;
+  .ask-page .rich__tablescroll {
+    overflow-x: auto;
   }
 
-  .ask-page .spark__axis {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 5px;
-    font-size: 8.5px;
+  .ask-page .rtable {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+  }
+
+  .ask-page .rtable th {
+    text-align: left;
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--text-3);
+    font-weight: 400;
+    padding: 0 12px 8px 0;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .ask-page .rtable td {
+    padding: 8px 12px 8px 0;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--hairline);
+    white-space: nowrap;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ask-page .rtable tbody tr {
+    animation: riseIn 0.3s ease both;
+  }
+
+  .ask-page .rtable tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .ask-page .rtable__num {
+    color: var(--text-2);
   }
 
   /* ---- composer ---- */

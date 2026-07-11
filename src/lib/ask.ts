@@ -1,135 +1,92 @@
-// The /ask agent: the fixed tool whitelist the model may call, strict validation of every tool call
-// (the model is untrusted — it never writes SQL and never picks whose data to read), the executors
-// that map each tool 1:1 onto a server-side data function with the profile_id injected here, and the
-// bounded agent loop that ties them together. See src/pages/api/ask.ts for the HTTP entry point.
+// The /ask agent, text-to-SQL edition. The model gets one tool — query_database — and writes a
+// read-only SQL SELECT against the listening schema; we validate it, run it through the read-only
+// run_ask_sql sandbox (statement timeout + read-only transaction, see the ask_sql migration), and
+// feed the rows back so the model can answer. This is a genuine "ask anything" over the data.
+//
+// Trust posture: the SQL is model-generated and therefore untrusted. It's kept safe by (1) an
+// app-layer guard here (single SELECT/WITH, no semicolons/comments/data-modifying CTEs) and (2) the
+// DB running it read-only with a timeout. It is NOT profile-isolated at the DB level yet — the model
+// is told to filter by the caller's profile_id, which is fine while Tim is the only user (revisit
+// before onboarding others; see the migration header).
 import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  getLeaderboard,
-  resolveWindowRange,
-  type DateRange,
-  type LeaderboardKind,
-  type LeaderboardWindow,
-} from './leaderboard';
-import { getListeningSummary, getListeningTrend, pickTrendBucket, type TrendBucket } from './stats';
 import { DISPLAY_TIME_ZONE } from './format';
 import type { LlmMessage, LlmProvider, LlmToolSchema } from './llm';
 
 export const ASK_KIND = 'ask';
 export const ASK_DAILY_LIMIT = 50;
 
-const MAX_TOOL_CALLS = 4; // hard budget across the whole conversation
+const MAX_TOOL_CALLS = 4; // SQL attempts across the whole conversation (leaves room to fix a bad query)
 const MAX_STEPS = 6; // model round-trips — a couple more than the tool budget to leave room to synthesise
 
-const FALLBACK_ANSWER = "Hmm — I couldn't work that one out. Try rephrasing, or ask about your top artists, tracks, minutes, discoveries, or skips.";
+const FALLBACK_ANSWER = "Hmm — I couldn't work that one out. Try rephrasing, maybe naming a specific artist, track, or time range.";
 const CORRECTIVE_INSTRUCTION =
-  'You answered without calling a tool. You may only state listening facts that come from a tool result. Call one of the available tools now, or if the question genuinely cannot be answered with them, say so plainly.';
-// Prefix for the user turn that carries tool results back to the model. Kept as a user message (not
+  'You answered without querying the database. You may only state listening facts that come from a query result. Call query_database now, or if the question genuinely cannot be answered from the data, say so plainly.';
+// Prefix for the user turn that carries query results back to the model. Kept as a user message (not
 // role:'tool') because the live Workers AI binding rejects tool-role threading without matching tool
 // call ids ("8001: Invalid input") — verified against the model.
 const RESULTS_PREAMBLE =
-  'Here are the results of the tools you called. Answer my question using only these results — quote their numbers and names verbatim. Do not call a tool again for data you already have. If they do not answer the question, say so plainly.';
+  'Here are the rows your query returned. Answer my question using only these rows — quote their numbers and names verbatim. If a query failed, fix it and try again. If the rows are empty, say nothing matched rather than guessing.';
 
 // ---------------------------------------------------------------------------------------------------
-// Validation — every value the model sends is treated as hostile until checked.
+// SQL guard. The DB read-only transaction is the authoritative write-blocker; these checks are
+// defense in depth plus they keep the run_ask_sql string-wrapping intact (no stray ';' or comment).
 
-export class ToolValidationError extends Error {}
+export class SqlValidationError extends Error {}
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+function sanitizeSql(raw: unknown): string {
+  let sql = typeof raw === 'string' ? raw : '';
+  sql = sql.trim();
+  // Strip ```sql ... ``` fences the model sometimes wraps around the query.
+  sql = sql.replace(/^```(?:sql)?\s*/i, '').replace(/\s*```$/, '').trim();
+  // Strip trailing semicolons/whitespace (the wrapper adds its own structure).
+  sql = sql.replace(/;+\s*$/, '').trim();
+  return sql;
 }
 
-function validateEnum<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
-  if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) return value as T;
-  throw new ToolValidationError(`"${field}" must be one of: ${allowed.join(', ')}.`);
-}
-
-function validateLimit(value: unknown, fallback: number, max: number): number {
-  if (value === undefined || value === null) return fallback;
-  const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) throw new ToolValidationError('"limit" must be a number.');
-  return Math.min(Math.max(Math.floor(n), 1), max);
-}
-
-// yyyy-mm-dd → Date (start/end of that day). Mirrors src/lib/params.ts, but throws rather than
-// returning null so a bad custom date is a validation error the model gets told about.
-function parseDay(value: unknown, field: string, endOfDay: boolean): Date {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new ToolValidationError(`"${field}" must be a date in YYYY-MM-DD form.`);
+function validateSql(sql: string): void {
+  if (!sql) throw new SqlValidationError('Write a SELECT query.');
+  if (!/^(with|select)\b/i.test(sql)) {
+    throw new SqlValidationError('Only SELECT queries are allowed (start with SELECT or WITH).');
   }
-  const date = new Date(endOfDay ? `${value}T23:59:59` : `${value}T00:00:00`);
-  if (isNaN(date.getTime())) throw new ToolValidationError(`"${field}" is not a valid date.`);
-  return date;
-}
-
-const WINDOWS: readonly LeaderboardWindow[] = ['7d', '30d', '6m', 'all', 'custom'];
-
-interface ResolvedRange {
-  window: LeaderboardWindow;
-  customSince?: Date;
-  customUntil?: Date;
-  range: DateRange;
-  label: string;
-}
-
-function labelFor(window: LeaderboardWindow, since?: Date, until?: Date): string {
-  switch (window) {
-    case '7d':
-      return 'the last 7 days';
-    case '30d':
-      return 'the last 30 days';
-    case '6m':
-      return 'the last 6 months';
-    case 'all':
-      return 'all time';
-    case 'custom': {
-      const fmt = (d: Date) =>
-        d.toLocaleDateString('en-GB', { timeZone: DISPLAY_TIME_ZONE, day: 'numeric', month: 'short', year: 'numeric' });
-      return `${fmt(since!)} – ${fmt(until!)}`;
-    }
+  if (sql.includes(';')) throw new SqlValidationError('Use a single statement — remove the ";".');
+  if (/--|\/\*/.test(sql)) throw new SqlValidationError('Remove SQL comments from the query.');
+  // Data-modifying CTE (WITH x AS (DELETE ...)) — precise match, won't false-positive on string
+  // literals. Any other write is already blocked by the SELECT/WITH-only start + the read-only txn.
+  if (/\bas\s*\(\s*(insert|update|delete|merge)\b/i.test(sql)) {
+    throw new SqlValidationError('Read-only SELECTs only — no data-modifying CTEs.');
   }
 }
 
-// Shared range parsing for every tool. `range` is one of the named windows or 'custom'; custom
-// requires since/until (YYYY-MM-DD), which must be a non-empty, non-future-anchored span.
-function resolveRange(args: Record<string, unknown>): ResolvedRange {
-  const window = validateEnum(args.range, WINDOWS, 'range');
-  if (window !== 'custom') {
-    return { window, range: resolveWindowRange(window), label: labelFor(window) };
-  }
-  const since = parseDay(args.since, 'since', false);
-  let until = parseDay(args.until, 'until', true);
-  const now = new Date();
-  if (until.getTime() > now.getTime()) until = now; // clamp a future end to now
-  if (since.getTime() >= until.getTime()) {
-    throw new ToolValidationError('"since" must be before "until".');
-  }
+// ---------------------------------------------------------------------------------------------------
+// Rich payload — an optional table of the query result rendered under the answer.
+
+export interface RichTable {
+  type: 'table';
+  title: string;
+  columns: string[];
+  rows: string[][];
+}
+export type RichPayload = RichTable;
+
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function buildTableRich(rows: Record<string, unknown>[]): RichTable {
+  const columns = Object.keys(rows[0]);
   return {
-    window,
-    customSince: since,
-    customUntil: until,
-    range: resolveWindowRange('custom', { since, until }),
-    label: labelFor('custom', since, until),
+    type: 'table',
+    title: `Result · ${rows.length} row${rows.length === 1 ? '' : 's'}`,
+    columns,
+    rows: rows.slice(0, 12).map((r) => columns.map((c) => formatCell(r[c]))),
   };
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Rich payloads — the one optional structured block the UI renders alongside the text answer.
-
-export interface RichRow {
-  rank: number;
-  title: string;
-  subtitle: string | null;
-  metric: string; // pre-formatted, mono-rendered (e.g. "34 plays · 120m", "72% skipped")
-  image: string | null;
-}
-
-export type RichPayload =
-  | { type: 'list'; title: string; shape: 'circle' | 'square'; rows: RichRow[] }
-  | { type: 'trend'; title: string; unit: string; points: { label: string; value: number }[] };
-
-// ---------------------------------------------------------------------------------------------------
-// Tool executors — each returns a compact JSON `result` fed back to the model (numbers verbatim) and
-// an optional `rich` block for the UI.
+// The one tool: run a read-only SELECT.
 
 interface ToolContext {
   service: SupabaseClient;
@@ -139,282 +96,82 @@ interface ToolOutcome {
   result: unknown;
   rich?: RichPayload;
 }
-type ToolExecutor = (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolOutcome>;
 
-const toMinutes = (totalMs: number) => Math.round(totalMs / 60000);
+async function execQueryDatabase(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  const sql = sanitizeSql(args.sql);
+  try {
+    validateSql(sql);
+  } catch (err) {
+    // Report guard failures back to the model so it can rewrite the query within its budget.
+    if (err instanceof SqlValidationError) return { result: { error: err.message } };
+    throw err;
+  }
 
-async function execListeningSummary(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
-  const { range, label } = resolveRange(args);
-  const summary = await getListeningSummary(ctx.service, ctx.profileId, range);
-  const cur = summary.current;
-  const prev = summary.previous;
+  const { data, error } = await ctx.service.rpc('run_ask_sql', { p_sql: sql });
+  if (error) {
+    // Surface the DB error (e.g. syntax, unknown column) so the model can correct its SQL — this is
+    // the caller's own data, not sensitive, and it makes the agent self-correcting.
+    return { result: { error: `SQL error: ${error.message}` } };
+  }
+
+  const rows = (Array.isArray(data) ? data : []) as Record<string, unknown>[];
   return {
-    result: {
-      range: label,
-      minutes: toMinutes(cur.totalMs),
-      plays: cur.totalPlays,
-      distinctArtists: cur.distinctArtists,
-      distinctTracks: cur.distinctTracks,
-      activeDays: cur.activeDays,
-      previousPeriod: prev
-        ? { minutes: toMinutes(prev.totalMs), plays: prev.totalPlays, distinctArtists: prev.distinctArtists }
-        : null,
-    },
+    result: { rowCount: rows.length, rows: rows.slice(0, 50), truncated: rows.length > 50 },
+    rich: rows.length > 0 ? buildTableRich(rows) : undefined,
   };
 }
-
-async function execLeaderboard(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
-  const { window, customSince, customUntil, label } = resolveRange(args);
-  const kind = validateEnum<LeaderboardKind>(args.kind, ['artists', 'tracks'], 'kind');
-  const limit = validateLimit(args.limit, 10, 25);
-  const { entries, hasMovement } = await getLeaderboard({
-    supabase: ctx.service,
-    profileId: ctx.profileId,
-    kind,
-    window,
-    customSince,
-    customUntil,
-    limit,
-  });
-  const result = {
-    kind,
-    range: label,
-    entries: entries.map((e) => ({
-      rank: e.rank,
-      name: e.title,
-      artist: e.subtitle,
-      plays: e.playCount,
-      minutes: e.totalMs ? toMinutes(e.totalMs) : 0,
-      movement: !hasMovement ? null : e.prevRank === null ? 'new' : e.prevRank - e.rank,
-    })),
-  };
-  const rich: RichPayload = {
-    type: 'list',
-    title: kind === 'artists' ? `Top artists · ${label}` : `Top tracks · ${label}`,
-    shape: kind === 'artists' ? 'circle' : 'square',
-    rows: entries.map((e) => ({
-      rank: e.rank,
-      title: e.title,
-      subtitle: e.subtitle,
-      metric: `${e.playCount ?? 0} plays${e.totalMs && e.totalMs > 0 ? ` · ${toMinutes(e.totalMs)}m` : ''}`,
-      image: e.image,
-    })),
-  };
-  return { result, rich };
-}
-
-async function execListeningTrend(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
-  const { range, label } = resolveRange(args);
-  const bucket =
-    args.bucket === undefined ? pickTrendBucket(range) : validateEnum<TrendBucket>(args.bucket, ['day', 'week'], 'bucket');
-  const trend = await getListeningTrend(ctx.service, ctx.profileId, range, bucket);
-  const fmtLabel = (d: Date) =>
-    d.toLocaleDateString('en-GB', {
-      timeZone: DISPLAY_TIME_ZONE,
-      ...(bucket === 'week' ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short' }),
-    });
-  const points = trend.map((p) => ({ label: fmtLabel(p.bucketStart), plays: p.playCount, minutes: toMinutes(p.totalMs) }));
-  const peak = points.reduce<{ label: string; plays: number } | null>(
-    (best, p) => (best === null || p.plays > best.plays ? { label: p.label, plays: p.plays } : best),
-    null,
-  );
-  const result = {
-    range: label,
-    bucket,
-    totalPlays: points.reduce((a, p) => a + p.plays, 0),
-    peak,
-    points,
-  };
-  const rich: RichPayload = {
-    type: 'trend',
-    title: `Plays over ${label}`,
-    unit: 'plays',
-    points: points.map((p) => ({ label: p.label, value: p.plays })),
-  };
-  return { result, rich };
-}
-
-async function execFirstPlays(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
-  const { range, label } = resolveRange(args);
-  const displayLimit = validateLimit(args.limit, 12, 50);
-  // Pull a generous cap so `newArtistCount` is exact for the "am I discovering more?" comparison,
-  // then only surface the top few to the model / UI.
-  const COUNT_CAP = 500;
-  const { data, error } = await ctx.service.rpc('first_plays', {
-    p_profile_id: ctx.profileId,
-    p_since: range.since.toISOString(),
-    p_until: range.until.toISOString(),
-    p_limit: COUNT_CAP,
-  });
-  if (error) throw error;
-  const rows = (data ?? []) as { artist_name: string; first_played_at: string; play_count: number }[];
-  const shown = rows.slice(0, displayLimit);
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleDateString('en-GB', { timeZone: DISPLAY_TIME_ZONE, day: 'numeric', month: 'short', year: 'numeric' });
-  const result = {
-    range: label,
-    newArtistCount: rows.length,
-    countCapped: rows.length === COUNT_CAP,
-    showing: shown.length,
-    artists: shown.map((r) => ({ name: r.artist_name, discovered: fmt(r.first_played_at), playsSince: Number(r.play_count) })),
-  };
-  const rich: RichPayload = {
-    type: 'list',
-    title: `New artists · ${label}`,
-    shape: 'circle',
-    rows: shown.map((r, i) => ({
-      rank: i + 1,
-      title: r.artist_name,
-      subtitle: `discovered ${fmt(r.first_played_at)}`,
-      metric: `${Number(r.play_count)} plays since`,
-      image: null,
-    })),
-  };
-  return { result, rich };
-}
-
-async function execSkipStats(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
-  const { range, label } = resolveRange(args);
-  const limit = validateLimit(args.limit, 10, 25);
-  const { data, error } = await ctx.service.rpc('skip_stats', {
-    p_profile_id: ctx.profileId,
-    p_since: range.since.toISOString(),
-    p_until: range.until.toISOString(),
-    p_limit: limit,
-  });
-  if (error) throw error;
-  const rows = (data ?? []) as {
-    track_id: string;
-    track_name: string;
-    artist_names: string[];
-    plays: number;
-    skips: number;
-    skip_rate: number;
-  }[];
-  const result = {
-    range: label,
-    note: 'Skip = under 30s listened, or under half the track when its length is known. Only imported plays record listened-time, so live-only tracks never show as skipped.',
-    tracks: rows.map((r) => ({
-      name: r.track_name,
-      artist: (r.artist_names ?? []).join(', '),
-      plays: Number(r.plays),
-      skips: Number(r.skips),
-      skipRatePct: Math.round(Number(r.skip_rate) * 100),
-    })),
-  };
-  const rich: RichPayload = {
-    type: 'list',
-    title: `Most skipped · ${label}`,
-    shape: 'square',
-    rows: rows.map((r, i) => ({
-      rank: i + 1,
-      title: r.track_name,
-      subtitle: (r.artist_names ?? []).join(', ') || null,
-      metric: `${Math.round(Number(r.skip_rate) * 100)}% skipped · ${r.skips}/${r.plays}`,
-      image: null,
-    })),
-  };
-  return { result, rich };
-}
-
-const EXECUTORS: Record<string, ToolExecutor> = {
-  listening_summary: execListeningSummary,
-  leaderboard: execLeaderboard,
-  listening_trend: execListeningTrend,
-  first_plays: execFirstPlays,
-  skip_stats: execSkipStats,
-};
-
-export const TOOL_NAMES = Object.keys(EXECUTORS);
-
-// ---------------------------------------------------------------------------------------------------
-// Tool schemas advertised to the model. Kept in lockstep with EXECUTORS (a name here with no executor,
-// or vice-versa, is a bug). `range` is shared shape across all five.
-
-const RANGE_PROPS = {
-  range: {
-    type: 'string',
-    enum: ['7d', '30d', '6m', 'all', 'custom'],
-    description:
-      "Time window. '7d'/'30d'/'6m' are the last N days/months from today; 'all' is all history; 'custom' needs since+until. For a specific month or year (e.g. 'in March', 'this year'), use 'custom' with explicit dates.",
-  },
-  since: { type: 'string', description: "Start date YYYY-MM-DD (only when range='custom')." },
-  until: { type: 'string', description: "End date YYYY-MM-DD, inclusive (only when range='custom')." },
-};
 
 export const TOOL_SCHEMAS: LlmToolSchema[] = [
   {
-    name: 'listening_summary',
+    name: 'query_database',
     description:
-      'Headline totals for a window — minutes listened, total plays, distinct artists/tracks, active days — plus the previous equal period for comparison. Use for "how much did I listen", "was I more active than last month".',
-    parameters: { type: 'object', properties: { ...RANGE_PROPS }, required: ['range'] },
-  },
-  {
-    name: 'leaderboard',
-    description:
-      'Top artists or tracks for a window, ranked by plays, with movement vs the previous period. Use for "who/what did I listen to most", "my #1 artist in March".',
+      "Run one read-only PostgreSQL SELECT against the user's listening database and get the matching rows back. Use it for every factual question about their listening.",
     parameters: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['artists', 'tracks'], description: 'Rank artists or tracks.' },
-        ...RANGE_PROPS,
-        limit: { type: 'number', description: 'How many to return (1-25, default 10).' },
+        sql: {
+          type: 'string',
+          description:
+            "A single read-only SELECT (or WITH … SELECT). Must filter by the user's profile_id. No semicolons, comments, or writes.",
+        },
       },
-      required: ['kind', 'range'],
-    },
-  },
-  {
-    name: 'listening_trend',
-    description:
-      'Plays and minutes bucketed over time (by day or week) for a window. Use for "when did I listen most", "how has my listening changed".',
-    parameters: {
-      type: 'object',
-      properties: {
-        ...RANGE_PROPS,
-        bucket: { type: 'string', enum: ['day', 'week'], description: 'Bucket size; omit to auto-pick.' },
-      },
-      required: ['range'],
-    },
-  },
-  {
-    name: 'first_plays',
-    description:
-      'Artists first ever heard within a window (newest discovery first), with a total count of new artists in that window. Use for "what did I discover", "am I finding more new artists this year".',
-    parameters: {
-      type: 'object',
-      properties: { ...RANGE_PROPS, limit: { type: 'number', description: 'How many to list (1-50, default 12).' } },
-      required: ['range'],
-    },
-  },
-  {
-    name: 'skip_stats',
-    description:
-      'Tracks you skip most in a window (proxy: under 30s listened, or under half the track), needing 5+ plays to rank. Use for "what do I skip the most".',
-    parameters: {
-      type: 'object',
-      properties: { ...RANGE_PROPS, limit: { type: 'number', description: 'How many to return (1-25, default 10).' } },
-      required: ['range'],
+      required: ['sql'],
     },
   },
 ];
 
 // ---------------------------------------------------------------------------------------------------
-// System prompt.
+// System prompt — the schema + the house rules for writing good, safe SQL.
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(profileId: string): string {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: DISPLAY_TIME_ZONE }); // YYYY-MM-DD, AWST
   return [
-    "You are Wrapt's listening assistant. Wrapt is a personal Spotify listening dashboard. You answer questions about the user's OWN listening history, warmly and briefly.",
-    `Today is ${today} (Australia/Perth time). Use this to resolve relative dates like "this year" or "last month".`,
+    "You are Wrapt's listening assistant. Wrapt is a personal Spotify listening dashboard. You answer questions about the user's OWN listening by writing ONE read-only SQL query, running it with the query_database tool, then answering warmly and briefly from the rows.",
+    `Today is ${today} (Australia/Perth). Use it to resolve relative dates like "this year" or "last month".`,
+    `The user's profile_id is '${profileId}'. EVERY query must filter with: profile_id = '${profileId}'.`,
+    '',
+    'DATABASE (PostgreSQL):',
+    '  plays(profile_id uuid, played_at timestamptz [UTC], track_id text, track_name text,',
+    '        artist_ids text[], artist_names text[], album_image text, duration_ms int,',
+    "        ms_played int, source text ['live'|'import'], created_at timestamptz)",
+    '  artists_cache(id text  -- spotify artist id, name text, genres text[], image text)',
     '',
     'RULES:',
-    '- Answer ONLY from tool results. Every number, name, artist, and date in your answer must come verbatim from a tool result. Never estimate, guess, or invent.',
-    '- To state any fact about listening, call a tool first. Do not answer listening questions from memory.',
-    '- You may call up to 4 tools, then give a final answer. Prefer the fewest tools that answer the question. For comparisons (e.g. "more than last year?"), call the same tool twice with different ranges.',
-    '- If the tools cannot answer, say so plainly. In particular: genre questions are unreliable (genre data is incomplete) and mood/energy/tempo/"vibe"/danceability questions are impossible (Spotify no longer exposes audio features) — say you can\'t do those rather than guessing.',
-    '- Minutes-listened and skip stats mostly reflect imported history; if a number looks thin, it may be because live plays don\'t record listened-time. Mention this only if relevant.',
+    '- Write a SINGLE read-only SELECT or WITH…SELECT. No INSERT/UPDATE/DELETE/DDL, no semicolons, no comments.',
+    `- Always include: WHERE profile_id = '${profileId}'.`,
+    '- There is NO artist_name column. Artists live in the text[] column artist_names (one play can have several). To rank, count, or filter by an individual artist you MUST unnest it: FROM plays p CROSS JOIN LATERAL unnest(p.artist_names) AS a(artist_name). Group/compare on lower(a.artist_name); match names with ILIKE (names include words like "The", e.g. "The Dreggs").',
+    '- Track names are in track_name (a plain column). Listened time per play = coalesce(ms_played, duration_ms, 0) milliseconds; minutes = that / 60000.0.',
+    '- Genres: join unnest(artist_ids) to artists_cache.id and use its genres array. Genre coverage is incomplete — if a genre query returns little, say so.',
+    "- Timestamps are UTC. For local day/hour/month buckets use (played_at at time zone 'Australia/Perth').",
+    '- To answer "where does artist/track X rank", rank ALL of them with a window function, then filter to X — do not just count X alone.',
+    '- Always ORDER BY sensibly and LIMIT to <= 50 rows unless you aggregate to a single row.',
+    '- Audio features (tempo, energy, valence, danceability, mood) do NOT exist in this data — say you can’t answer those rather than guessing.',
     '',
-    'STYLE: playful, warm, human — one light touch is fine, clarity first. 1-3 sentences. Numbers read naturally (e.g. "You played Radiohead 42 times").',
+    'EXAMPLES:',
+    `- Top artists by plays: SELECT a.artist_name, count(*) AS plays FROM plays p CROSS JOIN LATERAL unnest(p.artist_names) AS a(artist_name) WHERE p.profile_id = '${profileId}' GROUP BY lower(a.artist_name), a.artist_name ORDER BY plays DESC LIMIT 10`,
+    `- Where a named artist ranks: WITH ranked AS (SELECT a.artist_name, count(*) AS plays, rank() OVER (ORDER BY count(*) DESC) AS position FROM plays p CROSS JOIN LATERAL unnest(p.artist_names) AS a(artist_name) WHERE p.profile_id = '${profileId}' GROUP BY lower(a.artist_name), a.artist_name) SELECT position, artist_name, plays FROM ranked WHERE lower(artist_name) ILIKE '%dreggs%'`,
+    '',
+    'After the rows come back, answer in 1-3 sentences using the exact numbers from the rows (do not put quotes or backticks around them). If a query errors, fix it and retry. STYLE: playful, warm, clarity first. Plain text only — no markdown or code formatting.',
   ].join('\n');
 }
 
@@ -427,10 +184,8 @@ export interface AskResult {
   toolsUsed: string[];
 }
 
-async function runToolCall(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
-  const executor = EXECUTORS[name];
-  if (!executor) throw new ToolValidationError(`Unknown tool "${name}".`);
-  return executor(args, ctx);
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
 export async function runAskAgent(params: {
@@ -441,7 +196,7 @@ export async function runAskAgent(params: {
 }): Promise<AskResult> {
   const { llm, service, profileId, question } = params;
   const ctx: ToolContext = { service, profileId };
-  const system = buildSystemPrompt();
+  const system = buildSystemPrompt(profileId);
 
   const messages: LlmMessage[] = [{ role: 'user', content: question }];
   let rich: RichPayload | null = null;
@@ -450,15 +205,13 @@ export async function runAskAgent(params: {
   let correctiveTried = false;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    // Once the budget is spent, drop the tools so the model is forced to synthesise a text answer
-    // from the results already in context.
+    // Once the budget is spent, drop the tools so the model must synthesise a text answer from the
+    // rows already in context.
     const tools = toolBudget > 0 ? TOOL_SCHEMAS : [];
     const resp = await llm.chat({ system, messages, tools });
 
     if (tools.length > 0 && resp.toolCalls.length > 0) {
       const calls = resp.toolCalls.slice(0, toolBudget);
-      // Echo the request as a plain assistant turn (keeps roles alternating), then feed every result
-      // back in one user turn — see RESULTS_PREAMBLE for why not role:'tool'.
       messages.push({
         role: 'assistant',
         content: resp.text?.trim() || JSON.stringify(calls.map((c) => ({ name: c.name, arguments: c.arguments }))),
@@ -469,13 +222,16 @@ export async function runAskAgent(params: {
         toolsUsed.push(call.name);
         let output: unknown;
         try {
-          const outcome = await runToolCall(call.name, asRecord(call.arguments), ctx);
-          if (outcome.rich) rich = outcome.rich;
-          output = outcome.result;
+          if (call.name !== 'query_database') {
+            output = { error: `Unknown tool "${call.name}". The only tool is query_database.` };
+          } else {
+            const outcome = await execQueryDatabase(asRecord(call.arguments), ctx);
+            if (outcome.rich) rich = outcome.rich;
+            output = outcome.result;
+          }
         } catch (err) {
-          // Validation failures and unknown tools are reported back to the model so it can correct
-          // itself; real DB errors surface as a generic failure (never leak internals).
-          output = err instanceof ToolValidationError ? { error: err.message } : { error: 'tool_unavailable' };
+          console.error(`ask tool "${call.name}" failed`, err);
+          output = { error: 'tool_unavailable' };
         }
         toolResults.push({ tool: call.name, output });
       }
@@ -486,8 +242,8 @@ export async function runAskAgent(params: {
     // Text answer path.
     const text = resp.text?.trim() ?? '';
 
-    // A text answer with no tool ever called is ungrounded. Retry once with a corrective nudge; if it
-    // still won't ground, return the neutral fallback rather than surfacing an unsupported claim.
+    // A text answer with no query ever run is ungrounded. Retry once with a corrective nudge; if it
+    // still won't ground, return the neutral fallback rather than an unsupported claim.
     if (toolsUsed.length === 0) {
       if (!correctiveTried) {
         correctiveTried = true;
@@ -501,7 +257,6 @@ export async function runAskAgent(params: {
     return { answer: text || FALLBACK_ANSWER, rich, toolsUsed };
   }
 
-  // Exhausted the step budget without a clean final answer.
   return { answer: FALLBACK_ANSWER, rich, toolsUsed };
 }
 
