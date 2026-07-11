@@ -2,12 +2,17 @@
 // Entry point for the self-serve history import — three states depending on where the profile's
 // import/enrichment stands. Follows the established inline-style + scoped-style-block convention
 // rather than inventing a new pattern.
+//
+// The "adding genres & art" enrichment progress message is only meaningful on Settings/Import
+// (where the rest of the enrichment UI lives) — elsewhere (the dashboard) it just reads as noise,
+// so `showEnrichmentProgress=false` collapses that state into the quiet "Import more history" link.
 import type { ImportProgress } from '../lib/import';
 
 interface Props {
   progress: ImportProgress;
+  showEnrichmentProgress?: boolean;
 }
-const { progress } = Astro.props;
+const { progress, showEnrichmentProgress = true } = Astro.props;
 ---
 
 {
@@ -16,7 +21,7 @@ const { progress } = Astro.props;
       <span>Import your history — add years of past listening</span>
       <span class="import-callout__arrow">→</span>
     </a>
-  ) : progress.pending > 0 ? (
+  ) : showEnrichmentProgress && progress.pending > 0 ? (
     <a href="/import" class="import-callout import-callout--progress mono">
       Adding genres & art… ({progress.done}/{progress.total})
     </a>

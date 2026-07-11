@@ -8,9 +8,8 @@ import { formatRelativeTime, DISPLAY_TIME_ZONE } from '../lib/format';
 const gate = await requireProfile<{
   id: string;
   display_name: string | null;
-  connected_at: string | null;
   last_synced_at: string | null;
-}>(Astro, 'id, display_name, connected_at, last_synced_at');
+}>(Astro, 'id, display_name, last_synced_at');
 if (gate instanceof Response) return gate;
 const { profile, service } = gate;
 
@@ -41,7 +40,6 @@ const [lastImport, lastLiveAdd, importProgress, askUsage] = await Promise.all([
 ]);
 
 const lastSynced = profile.last_synced_at ? new Date(profile.last_synced_at) : null;
-const connectedAt = profile.connected_at ? new Date(profile.connected_at) : null;
 const now = new Date();
 
 // Absolute AWST-time stamp — SSR runs UTC on Cloudflare, so pin the household zone (see
@@ -108,9 +106,9 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
         <span class="kv__v">{profile.display_name ?? 'Connected'}</span>
       </div>
       <div class="kv">
-        <span class="kv__k mono">Connected</span>
+        <span class="kv__k mono">Last Connected</span>
         <span class="kv__v">
-          {connectedAt ? `${absolute(connectedAt)}` : '—'}
+          {lastSynced ? agoLabel(lastSynced) : '—'}
         </span>
       </div>
       <a class="btn" href="/api/auth/spotify">Reconnect Spotify</a>

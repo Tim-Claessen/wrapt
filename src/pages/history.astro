@@ -87,7 +87,10 @@ function whenParts(date: Date): { date: string; time: string } {
     <header class="hist__head">
       <span class="eyebrow mono">Play History</span>
       <h1 class="hist__title">Everything you've played</h1>
-      <p class="hist__lede">Every logged play, newest first. Filter by date or search a song or artist.</p>
+      <p class="hist__lede">
+        Every logged play, newest first. Filter by date or search a song or artist.
+        Looking for one artist's whole story? <a href="/artist" class="hist__artist-link">Search their page →</a>
+      </p>
     </header>
 
     {loadError && <p class="load-error mono">{loadError}</p>}
@@ -114,7 +117,7 @@ function whenParts(date: Date): { date: string; time: string } {
 
             {/* Filters */}
             <form method="get" class="filters">
-              <div class="filters__group">
+              <div class="filters__group filters__group--search">
                 <label class="filters__label mono" for="q">Search</label>
                 <input
                   id="q"
@@ -125,13 +128,15 @@ function whenParts(date: Date): { date: string; time: string } {
                   class="filters__input filters__input--wide"
                 />
               </div>
-              <div class="filters__group">
-                <label class="filters__label mono" for="since">From</label>
-                <input id="since" type="date" name="since" value={sinceParam ?? ''} class="filters__input" />
-              </div>
-              <div class="filters__group">
-                <label class="filters__label mono" for="until">To</label>
-                <input id="until" type="date" name="until" value={untilParam ?? ''} class="filters__input" />
+              <div class="filters__dates">
+                <div class="filters__group">
+                  <label class="filters__label mono" for="since">From</label>
+                  <input id="since" type="date" name="since" value={sinceParam ?? ''} class="filters__input" />
+                </div>
+                <div class="filters__group">
+                  <label class="filters__label mono" for="until">To</label>
+                  <input id="until" type="date" name="until" value={untilParam ?? ''} class="filters__input" />
+                </div>
               </div>
               <div class="filters__actions">
                 <button type="submit" class="filters__submit">Apply</button>
@@ -228,6 +233,16 @@ function whenParts(date: Date): { date: string; time: string } {
     line-height: 1.5;
   }
 
+  .hist__artist-link {
+    color: var(--gold);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .hist__artist-link:hover {
+    text-decoration: underline;
+  }
+
   .load-error {
     margin-top: 16px;
     font-size: 12.5px;
@@ -266,27 +281,28 @@ function whenParts(date: Date): { date: string; time: string } {
     color: var(--text-3);
   }
 
-  /* ---- filters ---- */
+  /* ---- filters ----
+     Stacked full-width rows on narrow screens; From/To only sit side-by-side once there's enough
+     room (min-width breakpoint below) for native date inputs to render without their calendar icon
+     overlapping the placeholder text — letting them shrink via flex-basis alone caused exactly that
+     overlap at in-between viewport widths. */
   .filters {
     margin-top: 20px;
     display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    align-items: flex-end;
+    flex-direction: column;
+    gap: 14px;
   }
 
   .filters__group {
     display: flex;
     flex-direction: column;
     gap: 5px;
-    flex: 1 1 130px;
-    /* Without this, native date inputs keep their intrinsic min width and can't shrink, so the
-       From/To boxes overflow their flex track and overlap. min-width:0 lets them shrink to fit. */
-    min-width: 0;
   }
 
-  .filters__group:first-child {
-    flex: 1 1 100%;
+  .filters__dates {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
 
   .filters__label {
@@ -311,7 +327,43 @@ function whenParts(date: Date): { date: string; time: string } {
     display: flex;
     align-items: center;
     gap: 12px;
-    flex: 0 0 auto;
+  }
+
+  @media (min-width: 420px) {
+    .filters__dates {
+      flex-direction: row;
+    }
+
+    .filters__dates .filters__group {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .filters {
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .filters__group--search {
+      flex: 1 1 100%;
+    }
+
+    .filters__dates {
+      flex: 0 0 auto;
+    }
+
+    .filters__dates .filters__group {
+      /* Fixed width (not flex-basis-with-shrink) so this can never be squeezed narrower than a
+         date input can render without the icon overlapping the text. */
+      flex: 0 0 150px;
+    }
+
+    .filters__actions {
+      flex: 0 0 auto;
+    }
   }
 
   .filters__submit {

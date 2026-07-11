@@ -207,7 +207,7 @@ const trendPoints = trend.map((point) => ({
   <div id="dashboard-content">
     <div class="dash-head">
       <span class="eyebrow mono">Hey, {profile.display_name ?? 'there'}</span>
-      <div class="dash-callout"><ImportCallout progress={importProgress} /></div>
+      <div class="dash-callout"><ImportCallout progress={importProgress} showEnrichmentProgress={false} /></div>
     </div>
 
     {loadError && <p class="load-error mono">{loadError}</p>}

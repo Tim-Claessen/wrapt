@@ -1,0 +1,432 @@
+---
+// A single-artist deep dive, reached by searching a name (no nav entry — linked from History).
+// Flow: ?q= is a loose search (substring match via artist_search); ?name= is an exact, resolved
+// artist. A single ?q= match redirects straight to ?name= for a clean, bookmarkable URL; multiple
+// matches render a pick-list; zero matches falls back to the empty state.
+import AppShell from '../layouts/AppShell.astro';
+import LeaderboardRow from '../components/LeaderboardRow.astro';
+import EmptyState from '../components/EmptyState.astro';
+import { requireProfile } from '../lib/auth';
+import { searchArtists, getArtistSummary } from '../lib/artist';
+import { getLeaderboard } from '../lib/leaderboard';
+import { formatCompactNumber, formatMinutes, DISPLAY_TIME_ZONE } from '../lib/format';
+
+const gate = await requireProfile<{ id: string }>(Astro, 'id');
+if (gate instanceof Response) return gate;
+const { profile, service } = gate;
+
+const url = Astro.url;
+const qParam = (url.searchParams.get('q') ?? '').trim();
+const nameParam = (url.searchParams.get('name') ?? '').trim();
+
+let matches: Awaited<ReturnType<typeof searchArtists>> = [];
+if (!nameParam && qParam) {
+  matches = await searchArtists(service, profile.id, qParam, 8);
+  if (matches.length === 1) {
+    return Astro.redirect(`/artist?name=${encodeURIComponent(matches[0].artistName)}`);
+  }
+}
+
+let summary: Awaited<ReturnType<typeof getArtistSummary>> = null;
+let topTracks: Awaited<ReturnType<typeof getLeaderboard>>['entries'] = [];
+if (nameParam) {
+  summary = await getArtistSummary(service, profile.id, nameParam);
+  if (summary) {
+    const result = await getLeaderboard({
+      supabase: service,
+      profileId: profile.id,
+      kind: 'tracks',
+      window: 'all',
+      artist: summary.artistName,
+      limit: 10,
+    });
+    topTracks = result.entries;
+  }
+}
+
+function absolute(date: Date): string {
+  return date.toLocaleDateString('en-GB', {
+    timeZone: DISPLAY_TIME_ZONE,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+---
+
+<AppShell title="Artist" wide nav>
+  <div class="artist">
+    <header class="artist__head">
+      <span class="eyebrow mono">Artist</span>
+      <h1 class="artist__title">Look up one artist</h1>
+      <p class="artist__lede">Search anyone you've played to see their full story — plays, minutes, and where it started.</p>
+    </header>
+
+    <form method="get" class="search">
+      <input
+        type="search"
+        name="q"
+        value={nameParam || qParam}
+        placeholder="Search an artist…"
+        class="search__input mono"
+        autofocus
+      />
+      <button type="submit" class="search__submit">Search</button>
+    </form>
+
+    {
+      nameParam && !summary && (
+        <EmptyState
+          title="No plays found"
+          body={`We couldn't find any plays by "${nameParam}". Check the spelling, or try a shorter search.`}
+          hint="◷ new plays and imports add artists as they land…"
+        />
+      )
+    }
+
+    {
+      !nameParam && qParam && matches.length === 0 && (
+        <EmptyState
+          title="No matches"
+          body={`Nothing in your history matches "${qParam}".`}
+          hint="◷ try a shorter or different spelling…"
+        />
+      )
+    }
+
+    {
+      !nameParam && matches.length > 1 && (
+        <section class="matches">
+          <p class="matches__label mono">{matches.length} artists match "{qParam}"</p>
+          <div class="matches__list">
+            {matches.map((m) => (
+              <a href={`/artist?name=${encodeURIComponent(m.artistName)}`} class="match">
+                <div class="match__art">
+                  {m.image ? <img src={m.image} alt="" loading="lazy" /> : <div class="match__art-fallback" />}
+                </div>
+                <div class="match__meta">
+                  <div class="match__name">{m.artistName}</div>
+                  <div class="match__plays mono">{m.playCount.toLocaleString()} plays</div>
+                </div>
+                <span class="match__chevron" aria-hidden="true">›</span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )
+    }
+
+    {
+      summary && (
+        <Fragment>
+          <section class="profile">
+            <div class="profile__art">
+              {summary.image ? <img src={summary.image} alt="" /> : <div class="profile__art-fallback" />}
+            </div>
+            <div class="profile__meta">
+              <span class="eyebrow mono">Artist</span>
+              <h2 class="profile__name">{summary.artistName}</h2>
+            </div>
+          </section>
+
+          <section class="stats">
+            <div class="stat">
+              <span class="stat__v mono">{formatCompactNumber(summary.totalPlays)}</span>
+              <span class="stat__l mono">Total plays</span>
+            </div>
+            <div class="stat">
+              <span class="stat__v mono">{formatMinutes(summary.totalMs)}</span>
+              <span class="stat__l mono">Time listened</span>
+            </div>
+            <div class="stat">
+              <span class="stat__v mono">{summary.firstPlayedAt ? absolute(summary.firstPlayedAt) : '—'}</span>
+              <span class="stat__l mono">First listened</span>
+            </div>
+            <div class="stat">
+              <span class="stat__v mono">{summary.bestYear ?? '—'}</span>
+              <span class="stat__l mono">Biggest year{summary.bestYear ? ` · ${formatMinutes(summary.bestYearMs)}` : ''}</span>
+            </div>
+          </section>
+
+          {
+            summary.firstTrackName && (
+              <p class="first-song mono">
+                First song you heard: <b>{summary.firstTrackName}</b>
+              </p>
+            )
+          }
+
+          <section class="top-tracks">
+            <div class="top-tracks__title">Most played songs</div>
+            <div class="top-tracks__rows">
+              {
+                topTracks.length > 0 ? (
+                  topTracks.map((entry) => (
+                    <LeaderboardRow entry={entry} showMovement={false} shape="square" href={null} />
+                  ))
+                ) : (
+                  <p class="empty-note">No tracks logged for this artist yet.</p>
+                )
+              }
+            </div>
+          </section>
+        </Fragment>
+      )
+    }
+  </div>
+</AppShell>
+
+<style>
+  .artist {
+    max-width: 720px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .artist__title {
+    margin: 6px 0 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+  }
+
+  .artist__lede {
+    margin: 8px 0 0;
+    font-size: 13.5px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  /* ---- search ---- */
+  .search {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+  }
+
+  .search__input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 11px 13px;
+    color: var(--text-1);
+    font-size: 13px;
+  }
+
+  .search__submit {
+    flex: 0 0 auto;
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    border-radius: 10px;
+    padding: 0 18px;
+    font-weight: 700;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* ---- match list ---- */
+  .matches {
+    margin-top: 24px;
+  }
+
+  .matches__label {
+    font-size: 11.5px;
+    color: var(--text-3);
+    margin-bottom: 10px;
+  }
+
+  .matches__list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .match {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 8px;
+    margin: 0 -8px;
+    border-radius: 10px;
+    border-bottom: 1px solid var(--hairline);
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.12s ease;
+  }
+
+  .match:hover {
+    background: var(--surface-raised);
+  }
+
+  .match__art {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .match__art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .match__art-fallback {
+    width: 100%;
+    height: 100%;
+  }
+
+  .match__meta {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .match__name {
+    font-size: 14.5px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .match__plays {
+    margin-top: 2px;
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+
+  .match__chevron {
+    flex: 0 0 auto;
+    color: var(--text-4);
+    font-size: 18px;
+  }
+
+  /* ---- profile header ---- */
+  .profile {
+    margin-top: 30px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .profile__art {
+    flex: 0 0 auto;
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .profile__art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .profile__art-fallback {
+    width: 100%;
+    height: 100%;
+  }
+
+  .profile__meta {
+    min-width: 0;
+  }
+
+  .profile__name {
+    margin: 4px 0 0;
+    font-size: clamp(20px, 5.5vw, 28px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---- stats ---- */
+  .stats {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 14px 16px;
+  }
+
+  .stat__v {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat__l {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .first-song {
+    margin-top: 16px;
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+
+  .first-song b {
+    color: var(--text-1);
+    font-weight: 700;
+  }
+
+  /* ---- top tracks ---- */
+  .top-tracks {
+    margin-top: 30px;
+  }
+
+  .top-tracks__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--hairline);
+    padding-bottom: 10px;
+  }
+
+  .top-tracks__rows {
+    margin-top: 4px;
+  }
+
+  .empty-note {
+    margin-top: 20px;
+    font-size: 14px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  @media (min-width: 560px) {
+    .stats {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+</style>
