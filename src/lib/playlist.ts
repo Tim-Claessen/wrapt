@@ -247,12 +247,29 @@ function toResolvedTrack(track: SpotifyTrack): ResolvedTrack {
   };
 }
 
-async function validateCandidates(accessToken: string, candidates: Candidate[]): Promise<{ resolved: ResolvedTrack[]; rejected: Candidate[] }> {
+// Cloudflare's free Workers plan hard-caps a request at 50 outbound fetches ("Too many subrequests"),
+// and the Supabase/auth/token calls before validation already spend ~8 of them. Budget what's left
+// across BOTH validation passes (each search is one fetch, a 429 retry another — hence the slack),
+// and stop searching once the render target is met; unattempted candidates are just dropped.
+const SEARCH_BUDGET = 34;
+
+interface SearchBudget {
+  remaining: number;
+}
+
+async function validateCandidates(
+  accessToken: string,
+  candidates: Candidate[],
+  budget: SearchBudget,
+  target: number,
+): Promise<{ resolved: ResolvedTrack[]; rejected: Candidate[] }> {
   const resolved: ResolvedTrack[] = [];
   const rejected: Candidate[] = [];
   // Sequential, not concurrent — politely respects Spotify's dev-mode rolling rate limit (C10);
   // spotifyRequest already retries 429s with backoff underneath searchTracks.
   for (const candidate of candidates) {
+    if (resolved.length >= target || budget.remaining <= 0) break;
+    budget.remaining--;
     let results: SpotifyTrack[] = [];
     try {
       results = await searchTracks(accessToken, candidate.artist, candidate.title);
@@ -296,10 +313,11 @@ export async function generatePlaylist(params: {
   const profile = await buildListeningProfile(service, profileId);
   const draft = await draftCandidates(llm, profile, brief, dial);
 
-  let { resolved, rejected } = await validateCandidates(accessToken, draft.candidates);
+  const budget: SearchBudget = { remaining: SEARCH_BUDGET };
+  let { resolved, rejected } = await validateCandidates(accessToken, draft.candidates, budget, RENDER_MAX);
   resolved = dedupeById(resolved);
 
-  if (resolved.length < RENDER_MAX && (resolved.length > 0 || draft.candidates.length > 0)) {
+  if (resolved.length < RENDER_MAX && budget.remaining > 0 && (resolved.length > 0 || draft.candidates.length > 0)) {
     const needed = RENDER_MAX - resolved.length;
     const avoidNames = [
       ...resolved.map((r) => `${r.artists[0] ?? ''} - ${r.name}`),
@@ -307,7 +325,7 @@ export async function generatePlaylist(params: {
     ];
     const replacements = await draftReplacements(llm, profile, brief, dial, avoidNames, needed);
     if (replacements.length > 0) {
-      const backfill = await validateCandidates(accessToken, replacements);
+      const backfill = await validateCandidates(accessToken, replacements, budget, needed);
       resolved = dedupeById([...resolved, ...backfill.resolved]);
     }
   }

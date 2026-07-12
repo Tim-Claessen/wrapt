@@ -92,6 +92,14 @@ function normaliseToolCalls(raw: unknown): LlmToolCall[] {
   return calls;
 }
 
+// A completion is usually a string, but arrives as a parsed object/array when the model emitted
+// valid JSON (see the response-shape note below) — normalise both to text.
+function coerceText(raw: unknown): string | undefined {
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw === 'object') return JSON.stringify(raw);
+  return undefined;
+}
+
 export function createWorkersAiProvider(ai: AiBinding, model: string = WORKERS_AI_MODEL): LlmProvider {
   return {
     model,
@@ -117,11 +125,13 @@ export function createWorkersAiProvider(ai: AiBinding, model: string = WORKERS_A
       )) as Record<string, unknown>;
 
       // Tool calls / text can arrive either top-level ({ tool_calls, response }) or OpenAI-nested
-      // ({ choices: [{ message: { tool_calls, content } }] }) — accept both.
+      // ({ choices: [{ message: { tool_calls, content } }] }) — accept both. And when the completion
+      // is itself valid JSON (the Playlist draft), llama-4 on Workers AI returns `response` as an
+      // already-parsed OBJECT, not a string — only truncated/prose completions stay strings. Callers
+      // expect text, so re-serialise; JSON-expecting callers just parse it straight back.
       const choiceMsg = (raw.choices as { message?: Record<string, unknown> }[] | undefined)?.[0]?.message;
       const toolCalls = normaliseToolCalls(raw.tool_calls ?? choiceMsg?.tool_calls);
-      const rawText = (typeof raw.response === 'string' ? raw.response : undefined) ??
-        (typeof choiceMsg?.content === 'string' ? (choiceMsg.content as string) : undefined);
+      const rawText = coerceText(raw.response) ?? coerceText(choiceMsg?.content);
       const text = rawText && rawText.trim() ? rawText : null;
       return { text, toolCalls };
     },
