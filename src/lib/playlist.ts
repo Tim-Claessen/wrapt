@@ -6,7 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getLeaderboard } from './leaderboard';
 import type { LlmProvider } from './llm';
 import { searchTracks, type SpotifyTrack } from './spotify';
-import { bumpUsage, getUsageRemaining, type UsageState } from './usage';
+import { bumpUsage, getUsageRemaining, resetUsage, type UsageState } from './usage';
 
 export const PLAYLIST_KIND = 'playlist';
 export const PLAYLIST_DAILY_LIMIT = 10;
@@ -26,6 +26,10 @@ export function bumpPlaylistUsage(service: SupabaseClient, profileId: string): P
 
 export function getPlaylistRemaining(service: SupabaseClient, profileId: string): Promise<{ used: number; remaining: number; limit: number }> {
   return getUsageRemaining(service, profileId, PLAYLIST_KIND, PLAYLIST_DAILY_LIMIT);
+}
+
+export function resetPlaylistUsage(service: SupabaseClient, profileId: string): Promise<void> {
+  return resetUsage(service, profileId, PLAYLIST_KIND);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -84,7 +88,26 @@ const DIAL_INSTRUCTIONS: Record<FamiliarityDial, string> = {
     "Nearly all tracks should be by artists NOT in the listener's profile above, but stylistically adjacent to their taste (their genres, era, energy) — a genuine discovery mix, not a rehash of what they already play. It's fine for your picks to skew older/canonical rather than brand-new.",
 };
 
-function buildDraftSystemPrompt(profile: string, dial: FamiliarityDial): string {
+// Regenerate context: the previous draft's tracks + the listener's plain-English feedback on it
+// ("more upbeat", "less Bon Iver", "swap the sad ones"). Folded into the system prompt as an extra
+// section rather than a special code path — the model just gets more to work with.
+interface FeedbackContext {
+  feedback: string;
+  previousTracks: Candidate[];
+}
+
+function buildDraftSystemPrompt(profile: string, dial: FamiliarityDial, feedbackCtx?: FeedbackContext): string {
+  const feedbackSection = feedbackCtx
+    ? [
+        '',
+        'REGENERATE WITH FEEDBACK:',
+        "The listener already saw a draft for this brief and asked for changes. Produce a fresh full set of tracks that takes their feedback into account — keep whatever still fits, replace whatever doesn't, and don't just repeat the previous list unchanged.",
+        `Their feedback: "${feedbackCtx.feedback}"`,
+        'Previously suggested tracks (for context, not necessarily to avoid — only drop the ones the feedback pushes against):',
+        feedbackCtx.previousTracks.map((t) => `${t.artist} - ${t.title}`).join('; '),
+      ].join('\n')
+    : '';
+
   return [
     "You are Wrapt's music curator. Wrapt is a personal Spotify listening dashboard. Given the listener's own listening profile and a plain-English brief, propose a playlist.",
     '',
@@ -92,6 +115,7 @@ function buildDraftSystemPrompt(profile: string, dial: FamiliarityDial): string 
     profile,
     '',
     `BRIEF DIAL ("${dial}"): ${DIAL_INSTRUCTIONS[dial]}`,
+    feedbackSection,
     '',
     'RULES:',
     '- CRITICAL: every track you suggest must be a REAL, existing song by a real artist. A separate step will verify every suggestion against Spotify\'s catalog and silently drop anything that does not resolve — so it is fine to be unsure, but never invent a title or artist to fit the brief.',
@@ -151,8 +175,14 @@ function parseCandidateRows(raw: unknown): Candidate[] {
   return rows;
 }
 
-async function draftCandidates(llm: LlmProvider, profile: string, brief: string, dial: FamiliarityDial): Promise<DraftResult> {
-  const system = buildDraftSystemPrompt(profile, dial);
+async function draftCandidates(
+  llm: LlmProvider,
+  profile: string,
+  brief: string,
+  dial: FamiliarityDial,
+  feedbackCtx?: FeedbackContext,
+): Promise<DraftResult> {
+  const system = buildDraftSystemPrompt(profile, dial, feedbackCtx);
   const resp = await llm.chat({
     system,
     messages: [{ role: 'user', content: brief }],
@@ -174,8 +204,9 @@ async function draftReplacements(
   dial: FamiliarityDial,
   avoid: string[],
   count: number,
+  feedbackCtx?: FeedbackContext,
 ): Promise<Candidate[]> {
-  const system = buildDraftSystemPrompt(profile, dial);
+  const system = buildDraftSystemPrompt(profile, dial, feedbackCtx);
   const message = [
     `${avoid.length} of your earlier suggestions could not be found on Spotify (typos, or they don't exist). Suggest ${count} NEW replacement tracks, different from all of these already tried:`,
     avoid.join('; '),
@@ -307,11 +338,15 @@ export async function generatePlaylist(params: {
   accessToken: string;
   brief: string;
   dial: FamiliarityDial;
+  feedback?: string;
+  previousTracks?: Candidate[];
 }): Promise<PlaylistResult> {
-  const { llm, service, profileId, accessToken, brief, dial } = params;
+  const { llm, service, profileId, accessToken, brief, dial, feedback, previousTracks } = params;
+  const feedbackCtx: FeedbackContext | undefined =
+    feedback && previousTracks && previousTracks.length > 0 ? { feedback, previousTracks } : undefined;
 
   const profile = await buildListeningProfile(service, profileId);
-  const draft = await draftCandidates(llm, profile, brief, dial);
+  const draft = await draftCandidates(llm, profile, brief, dial, feedbackCtx);
 
   const budget: SearchBudget = { remaining: SEARCH_BUDGET };
   let { resolved, rejected } = await validateCandidates(accessToken, draft.candidates, budget, RENDER_MAX);
@@ -323,7 +358,7 @@ export async function generatePlaylist(params: {
       ...resolved.map((r) => `${r.artists[0] ?? ''} - ${r.name}`),
       ...rejected.map((c) => `${c.artist} - ${c.title}`),
     ];
-    const replacements = await draftReplacements(llm, profile, brief, dial, avoidNames, needed);
+    const replacements = await draftReplacements(llm, profile, brief, dial, avoidNames, needed, feedbackCtx);
     if (replacements.length > 0) {
       const backfill = await validateCandidates(accessToken, replacements, budget, needed);
       resolved = dedupeById([...resolved, ...backfill.resolved]);

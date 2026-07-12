@@ -110,6 +110,11 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
   let playlistRemaining = Number(root.dataset.remaining ?? '0');
   let dial: Dial = 'my_music';
   let playlistBusy = false;
+  // Context captured from the last successful generate, used by Regenerate so feedback re-runs the
+  // SAME brief/dial rather than whatever's currently in the (possibly since-edited) brief input.
+  let lastBrief = '';
+  let lastDial: Dial = 'my_music';
+  let lastTracks: PlaylistTrack[] = [];
 
   for (const btn of dialButtons) {
     btn.addEventListener('click', () => {
@@ -129,7 +134,7 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
         : `${playlistRemaining} of ${playlistLimit} playlist${playlistRemaining === 1 ? '' : 's'} left today.`;
   }
 
-  function setPlaylistBusy(state: boolean): void {
+  function setPlaylistBusy(state: boolean, statusText = 'finding real matches on Spotify…'): void {
     playlistBusy = state;
     playlistInput.disabled = state;
     playlistSend.disabled = state || playlistRemaining <= 0;
@@ -137,6 +142,7 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
     for (const btn of dialButtons) btn.disabled = state;
     root.classList.toggle('is-busy', state);
     playlistStatus.hidden = !state;
+    playlistStatus.textContent = statusText;
     if (state) playlistResult.innerHTML = '';
   }
 
@@ -226,7 +232,13 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
     playlistResult.innerHTML = '';
 
     const header = el('div', 'presult__head');
-    header.appendChild(el('div', 'presult__name', name));
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'presult__name-input';
+    nameInput.value = name;
+    nameInput.maxLength = 100;
+    nameInput.setAttribute('aria-label', 'Playlist name');
+    header.appendChild(nameInput);
     if (description) header.appendChild(el('p', 'presult__desc', description));
     if (struggled) {
       header.appendChild(
@@ -246,31 +258,56 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
     tracks.forEach((t, i) => list.appendChild(trackRow(t, i)));
     playlistResult.appendChild(list);
 
+    const feedbackWrap = el('div', 'pfeedback');
+    const feedbackInput = document.createElement('input');
+    feedbackInput.type = 'text';
+    feedbackInput.className = 'composer__input';
+    feedbackInput.placeholder = 'not quite right? tell me what to change…';
+    feedbackInput.maxLength = 200;
+    feedbackInput.setAttribute('aria-label', 'Feedback for regenerating this playlist');
+    const regenBtn = el('button', 'btn-secondary mono', 'Regenerate');
+    regenBtn.type = 'button';
+    feedbackWrap.appendChild(feedbackInput);
+    feedbackWrap.appendChild(regenBtn);
+    playlistResult.appendChild(feedbackWrap);
+    regenBtn.addEventListener('click', () => void regeneratePlaylist(feedbackInput.value));
+    feedbackInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void regeneratePlaylist(feedbackInput.value);
+      }
+    });
+
     const saveWrap = el('div', 'presult__save');
     if (hasPlaylistScope) {
       const saveBtn = el('button', 'btn-save mono', 'Save to Spotify');
       saveBtn.type = 'button';
       saveWrap.appendChild(saveBtn);
-      saveBtn.addEventListener('click', () => void savePlaylist(name, description, tracks, saveBtn, saveWrap));
+      saveBtn.addEventListener('click', () => {
+        const liveName = nameInput.value.trim();
+        if (!liveName) {
+          nameInput.focus();
+          return;
+        }
+        void savePlaylist(liveName, description, tracks, saveBtn, saveWrap);
+      });
     } else {
       saveWrap.appendChild(reconnectNote('Wrapt needs one new permission to save playlists — ', '/api/auth/spotify'));
     }
     playlistResult.appendChild(saveWrap);
   }
 
-  async function generatePlaylist(brief: string): Promise<void> {
-    if (playlistBusy || !brief.trim()) return;
-    if (playlistRemaining <= 0) {
-      updatePlaylistHint();
-      return;
-    }
-    setPlaylistBusy(true);
+  async function runGenerate(
+    body: { brief: string; dial: Dial; feedback?: string; previousTracks?: { artist: string; title: string }[] },
+    statusText: string,
+  ): Promise<void> {
+    setPlaylistBusy(true, statusText);
 
     try {
       const res = await fetch('/api/playlist/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brief, dial }),
+        body: JSON.stringify(body),
       });
       const data = (await res.json().catch(() => ({}))) as GenerateResponse;
       if (typeof data.remaining === 'number') playlistRemaining = data.remaining;
@@ -287,6 +324,9 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
           playlistNote(data.message ?? 'Something went wrong on my end — try that again in a moment.'),
         );
       } else {
+        lastBrief = body.brief;
+        lastDial = body.dial;
+        lastTracks = data.tracks;
         renderResult(
           data.name ?? 'Your mix',
           data.description ?? '',
@@ -302,6 +342,32 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
       updatePlaylistHint();
       setPlaylistBusy(false);
     }
+  }
+
+  async function generatePlaylist(brief: string): Promise<void> {
+    if (playlistBusy || !brief.trim()) return;
+    if (playlistRemaining <= 0) {
+      updatePlaylistHint();
+      return;
+    }
+    await runGenerate({ brief, dial }, 'finding real matches on Spotify…');
+  }
+
+  async function regeneratePlaylist(feedback: string): Promise<void> {
+    if (playlistBusy || !feedback.trim() || !lastBrief) return;
+    if (playlistRemaining <= 0) {
+      updatePlaylistHint();
+      return;
+    }
+    await runGenerate(
+      {
+        brief: lastBrief,
+        dial: lastDial,
+        feedback: feedback.trim(),
+        previousTracks: lastTracks.map((t) => ({ artist: t.artists[0] ?? '', title: t.name })),
+      },
+      'reworking it based on your feedback…',
+    );
   }
 
   playlistForm.addEventListener('submit', (event) => {
@@ -452,10 +518,27 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
     margin-top: 20px;
   }
 
-  .create-page .presult__name {
+  .create-page .presult__name-input {
+    display: block;
+    width: 100%;
+    appearance: none;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    padding: 2px 0 4px;
+    font-family: inherit;
     font-size: 18px;
     font-weight: 700;
     color: var(--text-1);
+  }
+
+  .create-page .presult__name-input:hover {
+    border-bottom-color: var(--hairline);
+  }
+
+  .create-page .presult__name-input:focus {
+    outline: none;
+    border-bottom-color: var(--gold);
   }
 
   .create-page .presult__desc {
@@ -548,6 +631,30 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
 
   .create-page .ptrack__dur:hover {
     color: var(--text-2);
+  }
+
+  .create-page .pfeedback {
+    display: flex;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .create-page .btn-secondary {
+    flex: 0 0 auto;
+    appearance: none;
+    background: var(--surface-raised);
+    color: var(--text-1);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+    padding: 0 18px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .create-page .btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .create-page .presult__save {

@@ -3,11 +3,30 @@ import { createSupabaseServerClient, createSupabaseServiceClient } from '../../.
 import { createWorkersAiProvider } from '../../../lib/llm';
 import { getValidSpotifyAccessToken } from '../../../lib/tokens';
 import { SpotifyTokenExpiredError } from '../../../lib/spotify';
-import { PLAYLIST_DAILY_LIMIT, bumpPlaylistUsage, generatePlaylist, type FamiliarityDial } from '../../../lib/playlist';
+import { PLAYLIST_DAILY_LIMIT, bumpPlaylistUsage, generatePlaylist, type Candidate, type FamiliarityDial } from '../../../lib/playlist';
 
 const MAX_BRIEF_LEN = 200;
+const MAX_FEEDBACK_LEN = 200;
+const MAX_PREVIOUS_TRACKS = 40;
 const DIALS: FamiliarityDial[] = ['my_music', 'mix', 'discovery'];
 const CAP_MESSAGE = "That's today's 10 playlists — back tomorrow. 🌙";
+
+// Optional regenerate-with-feedback fields: previousTracks is trusted only as loose text (artist/title
+// strings echoed back into the next draft prompt), same trust level as the brief itself — it's never
+// used to look anything up, so no stricter validation is needed than "these are non-empty strings".
+function parsePreviousTracks(raw: unknown): Candidate[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const rows: Candidate[] = [];
+  for (const entry of raw.slice(0, MAX_PREVIOUS_TRACKS)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const artist = (entry as { artist?: unknown }).artist;
+    const title = (entry as { title?: unknown }).title;
+    if (typeof artist === 'string' && artist.trim() && typeof title === 'string' && title.trim()) {
+      rows.push({ artist: artist.trim().slice(0, 100), title: title.trim().slice(0, 100) });
+    }
+  }
+  return rows.length > 0 ? rows : undefined;
+}
 
 // Generate (but do not save) a playlist from a free-text brief + familiarity dial. Same auth/usage
 // pattern as api/ask.ts: verify the session, resolve the caller's profile, charge the daily cap before
@@ -38,6 +57,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
   }
   const brief = (body as { brief?: unknown })?.brief;
   const dial = (body as { dial?: unknown })?.dial;
+  const feedbackRaw = (body as { feedback?: unknown })?.feedback;
   if (typeof brief !== 'string' || brief.trim().length === 0) {
     return json({ error: 'empty_brief' }, 400);
   }
@@ -47,6 +67,11 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
   if (typeof dial !== 'string' || !DIALS.includes(dial as FamiliarityDial)) {
     return json({ error: 'invalid_dial' }, 400);
   }
+  if (feedbackRaw !== undefined && (typeof feedbackRaw !== 'string' || feedbackRaw.length > MAX_FEEDBACK_LEN)) {
+    return json({ error: 'feedback_too_long' }, 400);
+  }
+  const feedback = typeof feedbackRaw === 'string' && feedbackRaw.trim() ? feedbackRaw.trim() : undefined;
+  const previousTracks = parsePreviousTracks((body as { previousTracks?: unknown })?.previousTracks);
 
   // Charge the request against today's cap before doing any work; a blocked request isn't charged.
   // Fails open (same posture as bumpAskUsage) so the feature still works if ai_usage isn't pasted yet.
@@ -81,6 +106,8 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
       accessToken: token.accessToken,
       brief: brief.trim(),
       dial: dial as FamiliarityDial,
+      feedback,
+      previousTracks,
     });
     if (!result.ok) return json({ ok: false, message: result.message, remaining: usage.remaining });
     return json({

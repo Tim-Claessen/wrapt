@@ -11,7 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { DISPLAY_TIME_ZONE } from './format';
 import type { LlmMessage, LlmProvider, LlmToolSchema } from './llm';
-import { bumpUsage, getUsageRemaining, type UsageState } from './usage';
+import { bumpUsage, getUsageRemaining, resetUsage, type UsageState } from './usage';
 
 export const ASK_KIND = 'ask';
 export const ASK_DAILY_LIMIT = 50;
@@ -273,4 +273,8 @@ export function bumpAskUsage(service: SupabaseClient, profileId: string): Promis
 
 export function getAskRemaining(service: SupabaseClient, profileId: string): Promise<{ used: number; remaining: number; limit: number }> {
   return getUsageRemaining(service, profileId, ASK_KIND, ASK_DAILY_LIMIT);
+}
+
+export function resetAskUsage(service: SupabaseClient, profileId: string): Promise<void> {
+  return resetUsage(service, profileId, ASK_KIND);
 }

@@ -143,6 +143,7 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
       <p class="card__note mono">
         Playlists today · {playlistUsage.used}/{playlistUsage.limit} used ({playlistUsage.remaining} left)
       </p>
+      <button id="usage-reset" class="link-btn mono" type="button">Reset today's Ask &amp; Playlist limits</button>
     </section>
 
     <section class="card">
@@ -174,6 +175,33 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
     </section>
   </div>
 </AppShell>
+
+<script>
+  const resetBtn = document.getElementById('usage-reset') as HTMLButtonElement | null;
+  resetBtn?.addEventListener('click', async () => {
+    resetBtn.disabled = true;
+    const originalText = resetBtn.textContent;
+    resetBtn.textContent = 'Resetting…';
+    try {
+      const res = await fetch('/api/usage/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'all' }),
+      });
+      if (res.ok) {
+        window.location.reload();
+        return;
+      }
+      resetBtn.textContent = "Couldn't reset — try again";
+    } catch {
+      resetBtn.textContent = "Couldn't reach the server";
+    }
+    resetBtn.disabled = false;
+    setTimeout(() => {
+      resetBtn.textContent = originalText;
+    }, 2500);
+  });
+</script>
 
 <style>
   .settings {
@@ -311,6 +339,28 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
 
   .link:hover {
     text-decoration: underline;
+  }
+
+  .link-btn {
+    display: inline-block;
+    margin-top: 12px;
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: var(--gold);
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+
+  .link-btn:hover {
+    text-decoration: underline;
+  }
+
+  .link-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+    text-decoration: none;
   }
 
   .bar {

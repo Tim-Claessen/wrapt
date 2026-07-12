@@ -58,3 +58,12 @@ export async function getUsageRemaining(
     return { used: 0, remaining: limit, limit };
   }
 }
+
+// Zero out today's counter for (profile, kind) — an escape hatch for /settings so a spent daily cap
+// doesn't have to wait for AWST midnight. Deletes rather than updates: no row for today is exactly
+// the same "0 used" state bump_ai_usage's INSERT path already handles.
+export async function resetUsage(service: SupabaseClient, profileId: string, kind: string): Promise<void> {
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: DISPLAY_TIME_ZONE }); // YYYY-MM-DD, AWST
+  const { error } = await service.from('ai_usage').delete().eq('profile_id', profileId).eq('day', day).eq('kind', kind);
+  if (error) throw error;
+}
