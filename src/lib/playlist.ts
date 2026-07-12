@@ -15,7 +15,9 @@ export type FamiliarityDial = 'my_music' | 'mix' | 'discovery';
 
 const DRAFT_TARGET = 28; // over-generate; validation culls
 const RENDER_MAX = 20;
-const RENDER_MIN = 12; // below this, apologise rather than show a thin result
+// Below this, still render whatever resolved (with a "struggled" note) rather than refuse outright —
+// a thin, honestly-flagged result beats a flat apology. Only a genuinely empty result is a hard fail.
+const RENDER_MIN = 12;
 const RECENCY_PATTERN = /\b(new|newest|latest|recent(ly)?|this week|just released|just dropped)\b/i;
 
 export function bumpPlaylistUsage(service: SupabaseClient, profileId: string): Promise<UsageState> {
@@ -250,7 +252,7 @@ function dedupeById(tracks: ResolvedTrack[]): ResolvedTrack[] {
 // 4. Orchestration.
 
 export type PlaylistResult =
-  | { ok: true; name: string; description: string; tracks: ResolvedTrack[]; recencyCaveat: boolean }
+  | { ok: true; name: string; description: string; tracks: ResolvedTrack[]; recencyCaveat: boolean; struggled: boolean }
   | { ok: false; message: string };
 
 export async function generatePlaylist(params: {
@@ -283,10 +285,10 @@ export async function generatePlaylist(params: {
   }
 
   const tracks = resolved.slice(0, RENDER_MAX);
-  if (tracks.length < RENDER_MIN) {
+  if (tracks.length === 0) {
     return {
       ok: false,
-      message: "I couldn't find enough real matches for that brief — try naming an artist, genre, or mood a bit more specifically.",
+      message: "I couldn't find any real matches for that brief — try naming an artist, genre, or mood a bit more specifically.",
     };
   }
 
@@ -296,5 +298,6 @@ export async function generatePlaylist(params: {
     description: draft.description,
     tracks,
     recencyCaveat: RECENCY_PATTERN.test(brief),
+    struggled: tracks.length < RENDER_MIN,
   };
 }

@@ -216,15 +216,19 @@ export async function getTrack(accessToken: string, trackId: string): Promise<Sp
 }
 
 // Search (C5: capped at 10 results/request) — used by the Playlist pipeline (src/lib/playlist.ts) to
-// resolve model-suggested (artist, title) pairs to real tracks. Field filters (track:/artist:) narrow
-// the search server-side; the caller still verifies the match itself before trusting a result.
+// resolve model-suggested (artist, title) pairs to real tracks. Deliberately a plain, unfiltered query
+// rather than field filters (track:"..." artist:"...") — those are strict about exact
+// punctuation/substrings and dropped a lot of genuine matches in testing (e.g. Australian indie/folk
+// artists with ampersands, apostrophes, or title suffixes Spotify's index doesn't line up with
+// field-filter syntax). The caller (validateCandidates) still verifies every result itself before
+// trusting it, so relaxing the query only costs precision at the search layer, not at acceptance.
 export async function searchTracks(
   accessToken: string,
   artist: string,
   title: string,
-  limit = 5,
+  limit = 8,
 ): Promise<SpotifyTrack[]> {
-  const q = `track:${JSON.stringify(title)} artist:${JSON.stringify(artist)}`;
+  const q = `${title} ${artist}`;
   const query = new URLSearchParams({ q, type: 'track', limit: String(limit) });
   const response = await authGet(`/search?${query}`, accessToken);
   if (!response.ok) {

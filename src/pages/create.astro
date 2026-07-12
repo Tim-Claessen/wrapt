@@ -1,0 +1,573 @@
+---
+import AppShell from '../layouts/AppShell.astro';
+import { requireProfile } from '../lib/auth';
+import { getPlaylistRemaining } from '../lib/playlist';
+
+const gate = await requireProfile<{ id: string; display_name: string | null; scopes: string[] | null }>(
+  Astro,
+  'id, display_name, scopes',
+);
+if (gate instanceof Response) return gate;
+const { profile, service } = gate;
+
+const playlistUsage = await getPlaylistRemaining(service, profile.id);
+const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-private');
+---
+
+<AppShell title="Create" wide nav>
+  <div
+    class="create-page"
+    data-remaining={playlistUsage.remaining}
+    data-limit={playlistUsage.limit}
+    data-has-scope={hasPlaylistScope ? '1' : '0'}
+  >
+    <header class="create-head">
+      <span class="eyebrow mono">Create</span>
+      <h1 class="create-title">Build a playlist from a brief.</h1>
+      <p class="create-lede">Tell me the mood, and I'll find real Spotify tracks to match.</p>
+    </header>
+
+    <p class="playlist-note mono">
+      Suggestions come from AI music knowledge seeded with your listening — not Spotify's recommendation engine.
+    </p>
+
+    <div class="dial mono" role="tablist" aria-label="Familiarity">
+      <button class="dial__pill is-active" type="button" data-dial="my_music" role="tab" aria-selected="true">My music</button>
+      <button class="dial__pill" type="button" data-dial="mix" role="tab" aria-selected="false">Mix</button>
+      <button class="dial__pill" type="button" data-dial="discovery" role="tab" aria-selected="false">Discovery</button>
+    </div>
+
+    <form id="playlist-form" class="composer" autocomplete="off">
+      <input
+        id="playlist-input"
+        class="composer__input"
+        type="text"
+        name="brief"
+        placeholder="rainy Sunday cooking, gym energy…"
+        maxlength="200"
+        aria-label="Playlist brief"
+      />
+      <button id="playlist-send" class="composer__send mono" type="submit">Generate</button>
+    </form>
+    <p id="playlist-hint" class="composer__hint mono">
+      {playlistUsage.remaining} of {playlistUsage.limit} playlists left today.
+    </p>
+
+    <p id="playlist-status" class="playlist-status mono" hidden>finding real matches on Spotify…</p>
+
+    <div id="playlist-result" class="playlist-result"></div>
+  </div>
+</AppShell>
+
+<script>
+  import { formatDuration } from '../lib/format';
+
+  interface PlaylistTrack {
+    id: string;
+    uri: string;
+    name: string;
+    artists: string[];
+    image: string | null;
+    durationMs: number;
+  }
+  interface GenerateResponse {
+    ok?: boolean;
+    name?: string;
+    description?: string;
+    tracks?: PlaylistTrack[];
+    recencyCaveat?: boolean;
+    struggled?: boolean;
+    remaining?: number;
+    capped?: boolean;
+    message?: string;
+    error?: string;
+  }
+  interface SaveResponse {
+    ok?: boolean;
+    url?: string;
+    error?: string;
+    message?: string;
+  }
+  type Dial = 'my_music' | 'mix' | 'discovery';
+
+  function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  const root = document.querySelector('.create-page') as HTMLElement;
+  const dialButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('.dial__pill'));
+  const playlistForm = document.getElementById('playlist-form') as HTMLFormElement;
+  const playlistInput = document.getElementById('playlist-input') as HTMLInputElement;
+  const playlistSend = document.getElementById('playlist-send') as HTMLButtonElement;
+  const playlistHint = document.getElementById('playlist-hint') as HTMLParagraphElement;
+  const playlistStatus = document.getElementById('playlist-status') as HTMLParagraphElement;
+  const playlistResult = document.getElementById('playlist-result') as HTMLDivElement;
+  const playlistLimit = Number(root.dataset.limit ?? '10');
+  const hasPlaylistScope = root.dataset.hasScope === '1';
+  let playlistRemaining = Number(root.dataset.remaining ?? '0');
+  let dial: Dial = 'my_music';
+  let playlistBusy = false;
+
+  for (const btn of dialButtons) {
+    btn.addEventListener('click', () => {
+      dial = btn.dataset.dial as Dial;
+      for (const b of dialButtons) {
+        const active = b === btn;
+        b.classList.toggle('is-active', active);
+        b.setAttribute('aria-selected', String(active));
+      }
+    });
+  }
+
+  function updatePlaylistHint(): void {
+    playlistHint.textContent =
+      playlistRemaining <= 0
+        ? "That's today's playlists used up — back tomorrow."
+        : `${playlistRemaining} of ${playlistLimit} playlist${playlistRemaining === 1 ? '' : 's'} left today.`;
+  }
+
+  function setPlaylistBusy(state: boolean): void {
+    playlistBusy = state;
+    playlistInput.disabled = state;
+    playlistSend.disabled = state || playlistRemaining <= 0;
+    playlistSend.textContent = state ? '…' : 'Generate';
+    playlistStatus.hidden = !state;
+    if (state) playlistResult.innerHTML = '';
+  }
+
+  function playlistNote(text: string): HTMLParagraphElement {
+    return el('p', 'presult__caveat mono', text);
+  }
+
+  function reconnectNote(prefix: string, href: string): HTMLParagraphElement {
+    const p = el('p', 'presult__caveat mono', prefix);
+    const link = el('a', 'presult__reconnect mono', 'reconnect Spotify');
+    link.href = href;
+    p.appendChild(link);
+    return p;
+  }
+
+  function trackRow(track: PlaylistTrack, index: number): HTMLElement {
+    const row = el('div', 'ptrack');
+    row.style.animationDelay = `${index * 50}ms`;
+    const art = el('div', 'ptrack__art');
+    if (track.image) {
+      const img = document.createElement('img');
+      img.src = track.image;
+      img.alt = '';
+      img.loading = 'lazy';
+      art.appendChild(img);
+    }
+    row.appendChild(art);
+    const meta = el('div', 'ptrack__meta');
+    meta.appendChild(el('div', 'ptrack__title', track.name));
+    meta.appendChild(el('div', 'ptrack__artist', track.artists.join(', ')));
+    row.appendChild(meta);
+    const dur = el('a', 'ptrack__dur mono', formatDuration(track.durationMs));
+    dur.href = `https://open.spotify.com/track/${track.id}`;
+    dur.target = '_blank';
+    dur.rel = 'noopener noreferrer';
+    row.appendChild(dur);
+    return row;
+  }
+
+  async function savePlaylist(
+    name: string,
+    description: string,
+    tracks: PlaylistTrack[],
+    btn: HTMLButtonElement,
+    wrap: HTMLElement,
+  ): Promise<void> {
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/playlist/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, trackUris: tracks.map((t) => t.uri) }),
+      });
+      const data = (await res.json().catch(() => ({}))) as SaveResponse;
+      if (data.ok && data.url) {
+        wrap.innerHTML = '';
+        const link = el('a', 'btn-save btn-save--done mono', 'Open in Spotify →');
+        link.href = data.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        wrap.appendChild(link);
+        return;
+      }
+      if (data.error === 'scope_missing' || data.error === 'reconnect_required') {
+        wrap.innerHTML = '';
+        wrap.appendChild(reconnectNote('Wrapt needs one new permission to save playlists — ', '/api/auth/spotify'));
+        return;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Save to Spotify';
+      wrap.appendChild(playlistNote(data.message ?? "Couldn't save that playlist — try again."));
+    } catch {
+      btn.disabled = false;
+      btn.textContent = 'Save to Spotify';
+      wrap.appendChild(playlistNote("Couldn't reach the server — check your connection and try again."));
+    }
+  }
+
+  function renderResult(
+    name: string,
+    description: string,
+    tracks: PlaylistTrack[],
+    recencyCaveat: boolean,
+    struggled: boolean,
+  ): void {
+    playlistResult.innerHTML = '';
+
+    const header = el('div', 'presult__head');
+    header.appendChild(el('div', 'presult__name', name));
+    if (description) header.appendChild(el('p', 'presult__desc', description));
+    if (struggled) {
+      header.appendChild(
+        playlistNote(
+          `I could only confidently match ${tracks.length} track${tracks.length === 1 ? '' : 's'} for that brief — here's what I found. Naming a specific artist or genre usually helps me find more.`,
+        ),
+      );
+    }
+    if (recencyCaveat) {
+      header.appendChild(
+        playlistNote("Heads up — I can't guarantee this reflects brand-new releases; these picks lean on music I actually know."),
+      );
+    }
+    playlistResult.appendChild(header);
+
+    const list = el('div', 'ptracks');
+    tracks.forEach((t, i) => list.appendChild(trackRow(t, i)));
+    playlistResult.appendChild(list);
+
+    const saveWrap = el('div', 'presult__save');
+    if (hasPlaylistScope) {
+      const saveBtn = el('button', 'btn-save mono', 'Save to Spotify');
+      saveBtn.type = 'button';
+      saveWrap.appendChild(saveBtn);
+      saveBtn.addEventListener('click', () => void savePlaylist(name, description, tracks, saveBtn, saveWrap));
+    } else {
+      saveWrap.appendChild(reconnectNote('Wrapt needs one new permission to save playlists — ', '/api/auth/spotify'));
+    }
+    playlistResult.appendChild(saveWrap);
+  }
+
+  async function generatePlaylist(brief: string): Promise<void> {
+    if (playlistBusy || !brief.trim()) return;
+    if (playlistRemaining <= 0) {
+      updatePlaylistHint();
+      return;
+    }
+    setPlaylistBusy(true);
+
+    try {
+      const res = await fetch('/api/playlist/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief, dial }),
+      });
+      const data = (await res.json().catch(() => ({}))) as GenerateResponse;
+      if (typeof data.remaining === 'number') playlistRemaining = data.remaining;
+
+      if (data.error === 'reconnect_required') {
+        playlistResult.innerHTML = '';
+        playlistResult.appendChild(reconnectNote('Your Spotify connection needs refreshing — ', '/api/auth/spotify'));
+      } else if (data.capped) {
+        playlistResult.innerHTML = '';
+        playlistResult.appendChild(playlistNote(data.message ?? "That's today's playlists used up."));
+      } else if (!data.ok || !data.tracks) {
+        playlistResult.innerHTML = '';
+        playlistResult.appendChild(
+          playlistNote(data.message ?? 'Something went wrong on my end — try that again in a moment.'),
+        );
+      } else {
+        renderResult(
+          data.name ?? 'Your mix',
+          data.description ?? '',
+          data.tracks,
+          Boolean(data.recencyCaveat),
+          Boolean(data.struggled),
+        );
+      }
+    } catch {
+      playlistResult.innerHTML = '';
+      playlistResult.appendChild(playlistNote("I couldn't reach the server just now — check your connection and try again."));
+    } finally {
+      updatePlaylistHint();
+      setPlaylistBusy(false);
+    }
+  }
+
+  playlistForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void generatePlaylist(playlistInput.value);
+  });
+
+  updatePlaylistHint();
+  setPlaylistBusy(false);
+</script>
+
+<style is:global>
+  .create-page .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .create-page .create-title {
+    margin: 6px 0 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+  }
+
+  .create-page .create-lede {
+    margin: 8px 0 0;
+    font-size: 14.5px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .create-page .playlist-note {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-3);
+    margin: 22px 0 18px;
+  }
+
+  .create-page .dial {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+  }
+
+  .create-page .dial__pill {
+    flex: 1 1 0;
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 11.5px;
+    padding: 8px 6px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: color 0.18s ease, background 0.18s ease;
+  }
+
+  .create-page .dial__pill.is-active {
+    background: var(--gold);
+    color: var(--gold-on);
+    font-weight: 700;
+  }
+
+  .create-page .composer {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .create-page .composer__input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 13px;
+    padding: 13px 15px;
+    color: var(--text-1);
+    font-family: inherit;
+    font-size: 14.5px;
+  }
+
+  .create-page .composer__input:focus {
+    outline: none;
+    border-color: var(--gold);
+  }
+
+  .create-page .composer__input::placeholder {
+    color: var(--text-3);
+  }
+
+  .create-page .composer__send {
+    flex: 0 0 auto;
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    border-radius: 13px;
+    padding: 0 20px;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .create-page .composer__send:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .create-page .composer__hint {
+    margin: 10px 0 0;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  .create-page .playlist-status {
+    margin: 18px 0 0;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .create-page .playlist-result {
+    margin-top: 6px;
+  }
+
+  .create-page .presult__head {
+    margin-top: 20px;
+  }
+
+  .create-page .presult__name {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-1);
+  }
+
+  .create-page .presult__desc {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+
+  .create-page .presult__caveat {
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-3);
+  }
+
+  .create-page .presult__reconnect {
+    color: var(--gold);
+    text-decoration: none;
+  }
+
+  .create-page .presult__reconnect:hover {
+    text-decoration: underline;
+  }
+
+  .create-page .ptracks {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .create-page .ptrack {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--hairline);
+    animation: riseIn 0.3s ease both;
+  }
+
+  .create-page .ptrack:last-child {
+    border-bottom: 0;
+  }
+
+  .create-page .ptrack__art {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .create-page .ptrack__art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .create-page .ptrack__meta {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .create-page .ptrack__title {
+    font-size: 13.5px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .create-page .ptrack__artist {
+    margin-top: 2px;
+    font-size: 11.5px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .create-page .ptrack__dur {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--text-3);
+    text-decoration: none;
+  }
+
+  .create-page .ptrack__dur:hover {
+    color: var(--text-2);
+  }
+
+  .create-page .presult__save {
+    margin-top: 20px;
+  }
+
+  .create-page .btn-save {
+    display: inline-block;
+    appearance: none;
+    background: var(--gold);
+    color: var(--gold-on);
+    border: 0;
+    text-decoration: none;
+    border-radius: 13px;
+    padding: 13px 22px;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .create-page .btn-save:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .create-page .btn-save--done {
+    background: var(--surface-raised);
+    color: var(--gold);
+    border: 1px solid var(--hairline);
+  }
+
+  @keyframes riseIn {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+</style>

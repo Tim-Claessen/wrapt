@@ -2,21 +2,12 @@
 import AppShell from '../layouts/AppShell.astro';
 import { requireProfile } from '../lib/auth';
 import { getAskRemaining } from '../lib/ask';
-import { getPlaylistRemaining } from '../lib/playlist';
 
-const gate = await requireProfile<{ id: string; display_name: string | null; scopes: string[] | null }>(
-  Astro,
-  'id, display_name, scopes',
-);
+const gate = await requireProfile<{ id: string; display_name: string | null }>(Astro, 'id, display_name');
 if (gate instanceof Response) return gate;
 const { profile, service } = gate;
 
-const [usage, playlistUsage] = await Promise.all([
-  getAskRemaining(service, profile.id),
-  getPlaylistRemaining(service, profile.id),
-]);
-const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-private');
-const skeletonRows = Array.from({ length: 12 });
+const usage = await getAskRemaining(service, profile.id);
 ---
 
 <AppShell title="Ask" wide nav>
@@ -27,78 +18,27 @@ const skeletonRows = Array.from({ length: 12 });
       <p class="ask-lede">Real answers from your own history — no vibes, just the numbers.</p>
     </header>
 
-    <div class="tabs mono" role="tablist">
-      <button class="tab is-active" data-mode="ask" role="tab" aria-selected="true">Ask</button>
-      <button class="tab" data-mode="playlist" role="tab" aria-selected="false">Playlist</button>
+    <div id="ask-body" class="ask-body">
+      <div id="chat-log" class="chat"></div>
+
+      <form id="ask-form" class="composer" autocomplete="off">
+        <input
+          id="ask-input"
+          class="composer__input"
+          type="text"
+          name="question"
+          placeholder="Ask about your listening…"
+          maxlength="500"
+          aria-label="Ask about your listening"
+        />
+        <button id="ask-send" class="composer__send mono" type="submit">Ask</button>
+      </form>
+      <p id="ask-hint" class="composer__hint mono">{usage.remaining} of {usage.limit} questions left today.</p>
     </div>
-
-    <section id="panel-ask" class="mode">
-      <div id="ask-body" class="ask-body">
-        <div id="chat-log" class="chat"></div>
-
-        <form id="ask-form" class="composer" autocomplete="off">
-          <input
-            id="ask-input"
-            class="composer__input"
-            type="text"
-            name="question"
-            placeholder="Ask about your listening…"
-            maxlength="500"
-            aria-label="Ask about your listening"
-          />
-          <button id="ask-send" class="composer__send mono" type="submit">Ask</button>
-        </form>
-        <p id="ask-hint" class="composer__hint mono">{usage.remaining} of {usage.limit} questions left today.</p>
-      </div>
-    </section>
-
-    <section id="panel-playlist" class="mode" hidden>
-      <div
-        id="playlist-body"
-        class="playlist-body"
-        data-remaining={playlistUsage.remaining}
-        data-limit={playlistUsage.limit}
-        data-has-scope={hasPlaylistScope ? '1' : '0'}
-      >
-        <p class="playlist-note mono">
-          Suggestions come from AI music knowledge seeded with your listening — not Spotify's recommendation engine.
-        </p>
-
-        <div class="dial mono" role="tablist" aria-label="Familiarity">
-          <button class="dial__pill is-active" type="button" data-dial="my_music" role="tab" aria-selected="true">My music</button>
-          <button class="dial__pill" type="button" data-dial="mix" role="tab" aria-selected="false">Mix</button>
-          <button class="dial__pill" type="button" data-dial="discovery" role="tab" aria-selected="false">Discovery</button>
-        </div>
-
-        <form id="playlist-form" class="composer" autocomplete="off">
-          <input
-            id="playlist-input"
-            class="composer__input"
-            type="text"
-            name="brief"
-            placeholder="rainy Sunday cooking, gym energy…"
-            maxlength="200"
-            aria-label="Playlist brief"
-          />
-          <button id="playlist-send" class="composer__send mono" type="submit">Generate</button>
-        </form>
-        <p id="playlist-hint" class="composer__hint mono">
-          {playlistUsage.remaining} of {playlistUsage.limit} playlists left today.
-        </p>
-
-        <div id="playlist-skeleton" class="playlist-skeleton" hidden aria-hidden="true">
-          {skeletonRows.map((_, i) => <div class="playlist-skeleton__row" style={`animation-delay:${i * 40}ms;`} />)}
-        </div>
-
-        <div id="playlist-result" class="playlist-result"></div>
-      </div>
-    </section>
   </div>
 </AppShell>
 
 <script>
-  import { formatDuration } from '../lib/format';
-
   type Rich = { type: 'table'; title: string; columns: string[]; rows: string[][] };
   interface AskResponse {
     answer?: string;
@@ -118,23 +58,6 @@ const skeletonRows = Array.from({ length: 12 });
   const limit = Number(root.dataset.limit ?? '50');
   let remaining = Number(root.dataset.remaining ?? '0');
   let busy = false;
-
-  // ---- mode tabs (Ask / Playlist) ----
-  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab'));
-  const panelAsk = document.getElementById('panel-ask') as HTMLElement;
-  const panelPlaylist = document.getElementById('panel-playlist') as HTMLElement;
-  for (const tab of tabs) {
-    tab.addEventListener('click', () => {
-      const mode = tab.dataset.mode;
-      for (const t of tabs) {
-        const active = t === tab;
-        t.classList.toggle('is-active', active);
-        t.setAttribute('aria-selected', String(active));
-      }
-      panelAsk.hidden = mode !== 'ask';
-      panelPlaylist.hidden = mode !== 'playlist';
-    });
-  }
 
   // ---- helpers ----
   function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -264,228 +187,6 @@ const skeletonRows = Array.from({ length: 12 });
 
   updateHint();
   setBusy(false);
-
-  // ---- Playlist tab ----
-  interface PlaylistTrack {
-    id: string;
-    uri: string;
-    name: string;
-    artists: string[];
-    image: string | null;
-    durationMs: number;
-  }
-  interface GenerateResponse {
-    ok?: boolean;
-    name?: string;
-    description?: string;
-    tracks?: PlaylistTrack[];
-    recencyCaveat?: boolean;
-    remaining?: number;
-    capped?: boolean;
-    message?: string;
-    error?: string;
-  }
-  interface SaveResponse {
-    ok?: boolean;
-    url?: string;
-    error?: string;
-    message?: string;
-  }
-  type Dial = 'my_music' | 'mix' | 'discovery';
-
-  const playlistRoot = document.getElementById('playlist-body') as HTMLDivElement;
-  const dialButtons = Array.from(playlistRoot.querySelectorAll<HTMLButtonElement>('.dial__pill'));
-  const playlistForm = document.getElementById('playlist-form') as HTMLFormElement;
-  const playlistInput = document.getElementById('playlist-input') as HTMLInputElement;
-  const playlistSend = document.getElementById('playlist-send') as HTMLButtonElement;
-  const playlistHint = document.getElementById('playlist-hint') as HTMLParagraphElement;
-  const playlistSkeleton = document.getElementById('playlist-skeleton') as HTMLDivElement;
-  const playlistResult = document.getElementById('playlist-result') as HTMLDivElement;
-  const playlistLimit = Number(playlistRoot.dataset.limit ?? '10');
-  const hasPlaylistScope = playlistRoot.dataset.hasScope === '1';
-  let playlistRemaining = Number(playlistRoot.dataset.remaining ?? '0');
-  let dial: Dial = 'my_music';
-  let playlistBusy = false;
-
-  for (const btn of dialButtons) {
-    btn.addEventListener('click', () => {
-      dial = btn.dataset.dial as Dial;
-      for (const b of dialButtons) {
-        const active = b === btn;
-        b.classList.toggle('is-active', active);
-        b.setAttribute('aria-selected', String(active));
-      }
-    });
-  }
-
-  function updatePlaylistHint(): void {
-    playlistHint.textContent =
-      playlistRemaining <= 0
-        ? "That's today's playlists used up — back tomorrow."
-        : `${playlistRemaining} of ${playlistLimit} playlist${playlistRemaining === 1 ? '' : 's'} left today.`;
-  }
-
-  function setPlaylistBusy(state: boolean): void {
-    playlistBusy = state;
-    playlistInput.disabled = state;
-    playlistSend.disabled = state || playlistRemaining <= 0;
-    playlistSend.textContent = state ? '…' : 'Generate';
-    playlistSkeleton.hidden = !state;
-    if (state) playlistResult.innerHTML = '';
-  }
-
-  function playlistNote(text: string): HTMLParagraphElement {
-    return el('p', 'presult__caveat mono', text);
-  }
-
-  function reconnectNote(prefix: string, href: string): HTMLParagraphElement {
-    const p = el('p', 'presult__caveat mono', prefix);
-    const link = el('a', 'presult__reconnect mono', 'reconnect Spotify');
-    link.href = href;
-    p.appendChild(link);
-    return p;
-  }
-
-  function trackRow(track: PlaylistTrack, index: number): HTMLElement {
-    const row = el('div', 'ptrack');
-    row.style.animationDelay = `${index * 50}ms`;
-    const art = el('div', 'ptrack__art');
-    if (track.image) {
-      const img = document.createElement('img');
-      img.src = track.image;
-      img.alt = '';
-      img.loading = 'lazy';
-      art.appendChild(img);
-    }
-    row.appendChild(art);
-    const meta = el('div', 'ptrack__meta');
-    meta.appendChild(el('div', 'ptrack__title', track.name));
-    meta.appendChild(el('div', 'ptrack__artist', track.artists.join(', ')));
-    row.appendChild(meta);
-    const dur = el('a', 'ptrack__dur mono', formatDuration(track.durationMs));
-    dur.href = `https://open.spotify.com/track/${track.id}`;
-    dur.target = '_blank';
-    dur.rel = 'noopener noreferrer';
-    row.appendChild(dur);
-    return row;
-  }
-
-  async function savePlaylist(
-    name: string,
-    description: string,
-    tracks: PlaylistTrack[],
-    btn: HTMLButtonElement,
-    wrap: HTMLElement,
-  ): Promise<void> {
-    btn.disabled = true;
-    btn.textContent = 'Saving…';
-    try {
-      const res = await fetch('/api/playlist/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description, trackUris: tracks.map((t) => t.uri) }),
-      });
-      const data = (await res.json().catch(() => ({}))) as SaveResponse;
-      if (data.ok && data.url) {
-        wrap.innerHTML = '';
-        const link = el('a', 'btn-save btn-save--done mono', 'Open in Spotify →');
-        link.href = data.url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        wrap.appendChild(link);
-        return;
-      }
-      if (data.error === 'scope_missing' || data.error === 'reconnect_required') {
-        wrap.innerHTML = '';
-        wrap.appendChild(reconnectNote('Wrapt needs one new permission to save playlists — ', '/api/auth/spotify'));
-        return;
-      }
-      btn.disabled = false;
-      btn.textContent = 'Save to Spotify';
-      wrap.appendChild(playlistNote(data.message ?? "Couldn't save that playlist — try again."));
-    } catch {
-      btn.disabled = false;
-      btn.textContent = 'Save to Spotify';
-      wrap.appendChild(playlistNote("Couldn't reach the server — check your connection and try again."));
-    }
-  }
-
-  function renderResult(name: string, description: string, tracks: PlaylistTrack[], recencyCaveat: boolean): void {
-    playlistResult.innerHTML = '';
-
-    const header = el('div', 'presult__head');
-    header.appendChild(el('div', 'presult__name', name));
-    if (description) header.appendChild(el('p', 'presult__desc', description));
-    if (recencyCaveat) {
-      header.appendChild(
-        playlistNote("Heads up — I can't guarantee this reflects brand-new releases; these picks lean on music I actually know."),
-      );
-    }
-    playlistResult.appendChild(header);
-
-    const list = el('div', 'ptracks');
-    tracks.forEach((t, i) => list.appendChild(trackRow(t, i)));
-    playlistResult.appendChild(list);
-
-    const saveWrap = el('div', 'presult__save');
-    if (hasPlaylistScope) {
-      const saveBtn = el('button', 'btn-save mono', 'Save to Spotify');
-      saveBtn.type = 'button';
-      saveWrap.appendChild(saveBtn);
-      saveBtn.addEventListener('click', () => void savePlaylist(name, description, tracks, saveBtn, saveWrap));
-    } else {
-      saveWrap.appendChild(reconnectNote('Wrapt needs one new permission to save playlists — ', '/api/auth/spotify'));
-    }
-    playlistResult.appendChild(saveWrap);
-  }
-
-  async function generatePlaylist(brief: string): Promise<void> {
-    if (playlistBusy || !brief.trim()) return;
-    if (playlistRemaining <= 0) {
-      updatePlaylistHint();
-      return;
-    }
-    setPlaylistBusy(true);
-
-    try {
-      const res = await fetch('/api/playlist/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brief, dial }),
-      });
-      const data = (await res.json().catch(() => ({}))) as GenerateResponse;
-      if (typeof data.remaining === 'number') playlistRemaining = data.remaining;
-
-      if (data.error === 'reconnect_required') {
-        playlistResult.innerHTML = '';
-        playlistResult.appendChild(reconnectNote('Your Spotify connection needs refreshing — ', '/api/auth/spotify'));
-      } else if (data.capped) {
-        playlistResult.innerHTML = '';
-        playlistResult.appendChild(playlistNote(data.message ?? "That's today's playlists used up."));
-      } else if (!data.ok || !data.tracks) {
-        playlistResult.innerHTML = '';
-        playlistResult.appendChild(
-          playlistNote(data.message ?? 'Something went wrong on my end — try that again in a moment.'),
-        );
-      } else {
-        renderResult(data.name ?? 'Your mix', data.description ?? '', data.tracks, Boolean(data.recencyCaveat));
-      }
-    } catch {
-      playlistResult.innerHTML = '';
-      playlistResult.appendChild(playlistNote("I couldn't reach the server just now — check your connection and try again."));
-    } finally {
-      updatePlaylistHint();
-      setPlaylistBusy(false);
-    }
-  }
-
-  playlistForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    void generatePlaylist(playlistInput.value);
-  });
-
-  updatePlaylistHint();
-  setPlaylistBusy(false);
 </script>
 
 <style is:global>
@@ -513,42 +214,6 @@ const skeletonRows = Array.from({ length: 12 });
     line-height: 1.5;
   }
 
-  .ask-page .tabs {
-    display: inline-flex;
-    gap: 4px;
-    margin-top: 22px;
-    padding: 4px;
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 12px;
-  }
-
-  .ask-page .tab {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--text-3);
-    font-size: 12.5px;
-    padding: 8px 18px;
-    border-radius: 9px;
-    cursor: pointer;
-    transition: color 0.15s ease, background 0.15s ease;
-  }
-
-  .ask-page .tab:hover {
-    color: var(--text-2);
-  }
-
-  .ask-page .tab.is-active {
-    color: var(--gold-on);
-    background: var(--gold);
-    font-weight: 700;
-  }
-
-  .ask-page .mode {
-    margin-top: 22px;
-  }
-
   /* ---- chat ----
      Before any question is asked, .ask-body centers the composer vertically in the space below
      the header (an empty .chat contributes no height, so the composer + hint sit in the middle).
@@ -559,6 +224,7 @@ const skeletonRows = Array.from({ length: 12 });
     flex-direction: column;
     justify-content: center;
     min-height: 44vh;
+    margin-top: 22px;
   }
 
   .ask-page .ask-body.has-messages {
@@ -818,191 +484,5 @@ const skeletonRows = Array.from({ length: 12 });
       opacity: 1;
       transform: translateY(0);
     }
-  }
-
-  /* ---- Playlist tab ---- */
-  .ask-page .playlist-note {
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-3);
-    margin: 0 0 18px;
-  }
-
-  .ask-page .dial {
-    display: flex;
-    gap: 2px;
-    padding: 3px;
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 13px;
-  }
-
-  .ask-page .dial__pill {
-    flex: 1 1 0;
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: var(--text-2);
-    font-size: 11.5px;
-    padding: 8px 6px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: color 0.18s ease, background 0.18s ease;
-  }
-
-  .ask-page .dial__pill.is-active {
-    background: var(--gold);
-    color: var(--gold-on);
-    font-weight: 700;
-  }
-
-  .ask-page .playlist-skeleton {
-    margin-top: 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .ask-page .playlist-skeleton__row {
-    height: 46px;
-    border-radius: 10px;
-    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
-    background-size: 200% 100%;
-    animation: shimmer 1.4s ease-in-out infinite;
-  }
-
-  .ask-page .playlist-result {
-    margin-top: 6px;
-  }
-
-  .ask-page .presult__head {
-    margin-top: 20px;
-  }
-
-  .ask-page .presult__name {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text-1);
-  }
-
-  .ask-page .presult__desc {
-    margin: 6px 0 0;
-    font-size: 13px;
-    color: var(--text-2);
-    line-height: 1.5;
-  }
-
-  .ask-page .presult__caveat {
-    margin: 10px 0 0;
-    font-size: 11.5px;
-    line-height: 1.5;
-    color: var(--text-3);
-  }
-
-  .ask-page .presult__reconnect {
-    color: var(--gold);
-    text-decoration: none;
-  }
-
-  .ask-page .presult__reconnect:hover {
-    text-decoration: underline;
-  }
-
-  .ask-page .ptracks {
-    margin-top: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .ask-page .ptrack {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--hairline);
-    animation: riseIn 0.3s ease both;
-  }
-
-  .ask-page .ptrack:last-child {
-    border-bottom: 0;
-  }
-
-  .ask-page .ptrack__art {
-    flex: 0 0 auto;
-    width: 42px;
-    height: 42px;
-    border-radius: 10px;
-    overflow: hidden;
-    background: linear-gradient(140deg, #4a4538, #1a1812);
-  }
-
-  .ask-page .ptrack__art img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-
-  .ask-page .ptrack__meta {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .ask-page .ptrack__title {
-    font-size: 13.5px;
-    color: var(--text-1);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .ask-page .ptrack__artist {
-    margin-top: 2px;
-    font-size: 11.5px;
-    color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .ask-page .ptrack__dur {
-    flex: 0 0 auto;
-    font-size: 11px;
-    color: var(--text-3);
-    text-decoration: none;
-  }
-
-  .ask-page .ptrack__dur:hover {
-    color: var(--text-2);
-  }
-
-  .ask-page .presult__save {
-    margin-top: 20px;
-  }
-
-  .ask-page .btn-save {
-    display: inline-block;
-    appearance: none;
-    background: var(--gold);
-    color: var(--gold-on);
-    border: 0;
-    text-decoration: none;
-    border-radius: 13px;
-    padding: 13px 22px;
-    font-size: 13.5px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .ask-page .btn-save:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .ask-page .btn-save--done {
-    background: var(--surface-raised);
-    color: var(--gold);
-    border: 1px solid var(--hairline);
   }
 </style>

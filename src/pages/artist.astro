@@ -89,19 +89,22 @@ const rawMinutes = summary ? Math.round(summary.totalMs / 60000) : 0;
 
     {
       !nameParam && !qParam && randomArtists.length > 0 && (
-        <section class="chips">
-          <p class="chips__label mono">Or jump to one you've played</p>
-          <div class="chips__list">
+        <section class="browse">
+          <p class="browse__label mono">Or jump to one you've played</p>
+          <div class="browse__list">
             {randomArtists.map((a, i) => (
               <a
                 href={`/artist?name=${encodeURIComponent(a.artistName)}`}
-                class="chip riseIn"
+                class="match riseIn"
                 style={`animation-delay:${i * 45}ms`}
               >
-                <div class="chip__art">
-                  {a.image ? <img src={a.image} alt="" loading="lazy" /> : <div class="chip__art-fallback" />}
+                <div class="match__art">
+                  {a.image ? <img src={a.image} alt="" loading="lazy" /> : <div class="match__art-fallback" />}
                 </div>
-                <span class="chip__name">{a.artistName}</span>
+                <div class="match__meta">
+                  <div class="match__name">{a.artistName}</div>
+                </div>
+                <span class="match__chevron" aria-hidden="true">›</span>
               </a>
             ))}
           </div>
@@ -417,55 +420,6 @@ const rawMinutes = summary ? Math.round(summary.totalMs / 60000) : 0;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
   }
 
-  .search__option {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px;
-    border-radius: 8px;
-    text-decoration: none;
-    color: inherit;
-  }
-
-  .search__option:hover,
-  .search__option--active {
-    background: var(--surface-raised);
-  }
-
-  .search__option-art {
-    flex: 0 0 auto;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    overflow: hidden;
-    background: linear-gradient(140deg, #4a4538, #1a1812);
-  }
-
-  .search__option-art img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-
-  .search__option-meta {
-    min-width: 0;
-  }
-
-  .search__option-name {
-    font-size: 13.5px;
-    color: var(--text-1);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .search__option-plays {
-    margin-top: 2px;
-    font-size: 11px;
-    color: var(--text-3);
-  }
-
   .search__submit {
     flex: 0 0 auto;
     background: var(--gold);
@@ -479,85 +433,22 @@ const rawMinutes = summary ? Math.round(summary.totalMs / 60000) : 0;
     cursor: pointer;
   }
 
-  /* ---- browse chips ----
-     Same bordered surface-raised card language as the stat tiles elsewhere in the app (History's
-     hero stats, the old per-artist stat grid) — not a standalone pill style. */
-  .chips {
-    margin-top: 24px;
-  }
-
-  .chips__label {
-    font-size: 11.5px;
-    color: var(--text-3);
-    margin-bottom: 10px;
-  }
-
-  .chips__list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-    gap: 10px;
-  }
-
-  .chip {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 14px 8px;
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 14px;
-    text-decoration: none;
-    color: var(--text-1);
-    text-align: center;
-    transition: border-color 0.15s ease, transform 0.15s ease;
-  }
-
-  .chip:hover {
-    border-color: var(--gold);
-    transform: translateY(-2px);
-  }
-
-  .chip__art {
-    flex: 0 0 auto;
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
-    overflow: hidden;
-    background: linear-gradient(140deg, #4a4538, #1a1812);
-  }
-
-  .chip__art img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-
-  .chip__art-fallback {
-    width: 100%;
-    height: 100%;
-  }
-
-  .chip__name {
-    width: 100%;
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* ---- match list ---- */
+  /* ---- browse list & search matches ----
+     Same row language as the dashboard's LeaderboardRow (circle art, name, chevron) — a plain
+     "jump to" list reads more like the rest of the app than a standalone chip grid. */
+  .browse,
   .matches {
     margin-top: 24px;
   }
 
+  .browse__label,
   .matches__label {
     font-size: 11.5px;
     color: var(--text-3);
     margin-bottom: 10px;
   }
 
+  .browse__list,
   .matches__list {
     display: flex;
     flex-direction: column;
@@ -833,7 +724,7 @@ const rawMinutes = summary ? Math.round(summary.totalMs / 60000) : 0;
     line-height: 1.5;
   }
 
-  /* ---- countdown-style reveal, used by the browse chips, search matches, and top tracks ---- */
+  /* ---- countdown-style reveal, used by the browse list, search matches, and top tracks ---- */
   .riseIn {
     animation: riseIn 0.3s ease both;
   }
@@ -847,5 +738,58 @@ const rawMinutes = summary ? Math.round(summary.totalMs / 60000) : 0;
       opacity: 1;
       transform: translateY(0);
     }
+  }
+</style>
+
+<style is:global>
+  /* Namespaced under .artist so these rules also style the search dropdown's option rows, which
+     are built in client JS (Astro's default scoped styles only reach server-rendered nodes). */
+  .artist .search__option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .artist .search__option:hover,
+  .artist .search__option--active {
+    background: var(--surface-raised);
+  }
+
+  .artist .search__option-art {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: linear-gradient(140deg, #4a4538, #1a1812);
+  }
+
+  .artist .search__option-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .artist .search__option-meta {
+    min-width: 0;
+  }
+
+  .artist .search__option-name {
+    font-size: 13.5px;
+    color: var(--text-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .artist .search__option-plays {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-3);
   }
 </style>

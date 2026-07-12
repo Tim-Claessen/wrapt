@@ -89,6 +89,7 @@ export const POST: APIRoute = async ({ request, cookies, locals }) => {
       description: result.description,
       tracks: result.tracks,
       recencyCaveat: result.recencyCaveat,
+      struggled: result.struggled,
       remaining: usage.remaining,
     });
   } catch (err) {
