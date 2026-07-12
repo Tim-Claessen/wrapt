@@ -3,6 +3,7 @@ import AppShell from '../layouts/AppShell.astro';
 import { requireProfile } from '../lib/auth';
 import { getImportProgress } from '../lib/import';
 import { getAskRemaining } from '../lib/ask';
+import { getPlaylistRemaining } from '../lib/playlist';
 import { formatRelativeTime, DISPLAY_TIME_ZONE } from '../lib/format';
 
 const gate = await requireProfile<{
@@ -32,11 +33,12 @@ async function latestCreatedAt(source: 'import' | 'live'): Promise<Date | null> 
   return data ? new Date(data.created_at as string) : null;
 }
 
-const [lastImport, lastLiveAdd, importProgress, askUsage] = await Promise.all([
+const [lastImport, lastLiveAdd, importProgress, askUsage, playlistUsage] = await Promise.all([
   latestCreatedAt('import'),
   latestCreatedAt('live'),
   getImportProgress(service, profileId),
   getAskRemaining(service, profileId),
+  getPlaylistRemaining(service, profileId),
 ]);
 
 const lastSynced = profile.last_synced_at ? new Date(profile.last_synced_at) : null;
@@ -137,6 +139,9 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
       }
       <p class="card__note mono">
         Ask questions today · {askUsage.used}/{askUsage.limit} used ({askUsage.remaining} left)
+      </p>
+      <p class="card__note mono">
+        Playlists today · {playlistUsage.used}/{playlistUsage.limit} used ({playlistUsage.remaining} left)
       </p>
     </section>
 

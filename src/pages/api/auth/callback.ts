@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { createSupabaseServerClient, createSupabaseServiceClient } from '../../../lib/supabase';
 import { encryptToken } from '../../../lib/crypto';
-import { exchangeCodeForTokens, getSpotifyProfile, SPOTIFY_SCOPES, SpotifyTokenExpiredError } from '../../../lib/spotify';
+import { exchangeCodeForTokens, getSpotifyProfile, SpotifyTokenExpiredError } from '../../../lib/spotify';
 
 // Spotify's redirect target: exchanges the auth code for tokens, encrypts the refresh token,
 // and stores the profile. Spotify tokens never reach the client (see CLAUDE.md).
@@ -52,7 +52,10 @@ export const GET: APIRoute = async ({ request, cookies, redirect, locals }) => {
       spotify_user_id: spotifyProfile.id,
       display_name: spotifyProfile.display_name,
       refresh_token_enc: refreshTokenEnc,
-      scopes: SPOTIFY_SCOPES,
+      // Store what Spotify actually granted (tokens.scope), not the constant we requested — lets
+      // callers detect a stale/partial grant (e.g. a connection made before playlist-modify-private
+      // existed) without waiting for a 403 on first write attempt.
+      scopes: tokens.scope ? tokens.scope.split(' ') : [],
       connected_at: new Date().toISOString(),
       last_synced_at: new Date().toISOString(),
     },

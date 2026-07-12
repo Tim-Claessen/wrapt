@@ -1,0 +1,300 @@
+// The Playlist tab on /ask: brief + familiarity dial -> LLM drafts candidate tracks -> every candidate
+// is resolved against the real Spotify Search API -> validated real tracks render -> user-initiated
+// save creates a private playlist. Hallucination control lives entirely in validateCandidates: nothing
+// renders, and nothing can be saved, unless it round-tripped through Spotify's own catalog first.
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getLeaderboard } from './leaderboard';
+import type { LlmProvider } from './llm';
+import { searchTracks, type SpotifyTrack } from './spotify';
+import { bumpUsage, getUsageRemaining, type UsageState } from './usage';
+
+export const PLAYLIST_KIND = 'playlist';
+export const PLAYLIST_DAILY_LIMIT = 10;
+
+export type FamiliarityDial = 'my_music' | 'mix' | 'discovery';
+
+const DRAFT_TARGET = 28; // over-generate; validation culls
+const RENDER_MAX = 20;
+const RENDER_MIN = 12; // below this, apologise rather than show a thin result
+const RECENCY_PATTERN = /\b(new|newest|latest|recent(ly)?|this week|just released|just dropped)\b/i;
+
+export function bumpPlaylistUsage(service: SupabaseClient, profileId: string): Promise<UsageState> {
+  return bumpUsage(service, profileId, PLAYLIST_KIND, PLAYLIST_DAILY_LIMIT);
+}
+
+export function getPlaylistRemaining(service: SupabaseClient, profileId: string): Promise<{ used: number; remaining: number; limit: number }> {
+  return getUsageRemaining(service, profileId, PLAYLIST_KIND, PLAYLIST_DAILY_LIMIT);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 1. Profile assembly — top ~30 artists/tracks over 6 months (reusing the leaderboard RPCs verbatim,
+// no new query) plus whatever genre coverage artists_cache already has. Kept compact (~30/30/12 short
+// lines, comfortably under the ~1,500 token budget) rather than token-counted precisely.
+
+async function buildListeningProfile(service: SupabaseClient, profileId: string): Promise<string> {
+  const [artists, tracks] = await Promise.all([
+    getLeaderboard({ supabase: service, profileId, kind: 'artists', window: '6m', limit: 30 }),
+    getLeaderboard({ supabase: service, profileId, kind: 'tracks', window: '6m', limit: 30 }),
+  ]);
+
+  const artistIds = [...new Set(artists.entries.map((e) => e.id).filter((id): id is string => Boolean(id)))];
+  let genreLines: string[] = [];
+  if (artistIds.length > 0) {
+    const { data } = await service.from('artists_cache').select('genres').in('id', artistIds);
+    const counts = new Map<string, number>();
+    for (const row of (data ?? []) as { genres: string[] }[]) {
+      for (const genre of row.genres ?? []) counts.set(genre, (counts.get(genre) ?? 0) + 1);
+    }
+    genreLines = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([g]) => g);
+  }
+
+  const artistLines = artists.entries.map((e) => e.title).join(', ') || '(no listening history yet)';
+  const trackLines = tracks.entries.map((e) => `${e.title} — ${e.subtitle ?? 'unknown artist'}`).join('\n') || '(no listening history yet)';
+  const genreText = genreLines.length > 0 ? genreLines.join(', ') : '(not enough artist metadata yet)';
+
+  return [
+    `Top artists (last 6 months): ${artistLines}`,
+    `Top genres: ${genreText}`,
+    'Top tracks (last 6 months):',
+    trackLines,
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 2. Draft — one LLM call, strict JSON out.
+
+export interface Candidate {
+  artist: string;
+  title: string;
+}
+
+interface DraftResult {
+  name: string;
+  description: string;
+  candidates: Candidate[];
+}
+
+const DIAL_INSTRUCTIONS: Record<FamiliarityDial, string> = {
+  my_music:
+    "About 90% of the tracks should be by artists or exact tracks already in the listener's profile above — lean hard into what they already love, this should feel like a familiar favourites mix. Up to ~10% can be a close, similar suggestion.",
+  mix: "Roughly half the tracks should be by artists/tracks from the listener's profile, and half should be new-to-them artists that are stylistically adjacent to their taste (similar genres/era/energy).",
+  discovery:
+    "Nearly all tracks should be by artists NOT in the listener's profile above, but stylistically adjacent to their taste (their genres, era, energy) — a genuine discovery mix, not a rehash of what they already play. It's fine for your picks to skew older/canonical rather than brand-new.",
+};
+
+function buildDraftSystemPrompt(profile: string, dial: FamiliarityDial): string {
+  return [
+    "You are Wrapt's music curator. Wrapt is a personal Spotify listening dashboard. Given the listener's own listening profile and a plain-English brief, propose a playlist.",
+    '',
+    "LISTENER'S PROFILE:",
+    profile,
+    '',
+    `BRIEF DIAL ("${dial}"): ${DIAL_INSTRUCTIONS[dial]}`,
+    '',
+    'RULES:',
+    '- CRITICAL: every track you suggest must be a REAL, existing song by a real artist. A separate step will verify every suggestion against Spotify\'s catalog and silently drop anything that does not resolve — so it is fine to be unsure, but never invent a title or artist to fit the brief.',
+    '- Your knowledge of very recent releases may be incomplete or outdated. If the brief asks for brand-new/latest music, do your best but favour tracks you are confident are real over guessing at exact new releases.',
+    `- Suggest about ${DRAFT_TARGET} tracks, no duplicates, matching the brief's mood/activity/genre.`,
+    '- Give the playlist a short, playful name (<=40 characters) and a one-sentence, warm, honest description (<=100 characters) reflecting the brief.',
+    '',
+    'Respond with ONLY a JSON object, no prose, no markdown fences:',
+    '{"name": "...", "description": "...", "tracks": [{"artist": "...", "title": "..."}]}',
+  ].join('\n');
+}
+
+function stripFences(raw: string): string {
+  return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
+function parseCandidateRows(raw: unknown): Candidate[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: Candidate[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const artist = (entry as Record<string, unknown>).artist;
+    const title = (entry as Record<string, unknown>).title;
+    if (typeof artist === 'string' && artist.trim() && typeof title === 'string' && title.trim()) {
+      rows.push({ artist: artist.trim(), title: title.trim() });
+    }
+  }
+  return rows;
+}
+
+async function draftCandidates(llm: LlmProvider, profile: string, brief: string, dial: FamiliarityDial): Promise<DraftResult> {
+  const system = buildDraftSystemPrompt(profile, dial);
+  const resp = await llm.chat({ system, messages: [{ role: 'user', content: brief }], tools: [] });
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(stripFences(resp.text ?? '')) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  const name = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim().slice(0, 60) : 'Your mix';
+  const description = typeof parsed.description === 'string' ? parsed.description.trim().slice(0, 160) : '';
+  return { name, description, candidates: parseCandidateRows(parsed.tracks).slice(0, DRAFT_TARGET + 4) };
+}
+
+// One corrective call for the backfill pass — same house rules, asked to avoid repeating what's
+// already been tried (resolved or rejected), no name/description needed this time.
+async function draftReplacements(
+  llm: LlmProvider,
+  profile: string,
+  brief: string,
+  dial: FamiliarityDial,
+  avoid: string[],
+  count: number,
+): Promise<Candidate[]> {
+  const system = buildDraftSystemPrompt(profile, dial);
+  const message = [
+    `${avoid.length} of your earlier suggestions could not be found on Spotify (typos, or they don't exist). Suggest ${count} NEW replacement tracks, different from all of these already tried:`,
+    avoid.join('; '),
+    '',
+    'Respond with ONLY JSON: {"tracks": [{"artist": "...", "title": "..."}]}',
+  ].join('\n');
+  const resp = await llm.chat({
+    system,
+    messages: [
+      { role: 'user', content: brief },
+      { role: 'assistant', content: '(earlier draft omitted)' },
+      { role: 'user', content: message },
+    ],
+    tools: [],
+  });
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(stripFences(resp.text ?? '')) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  return parseCandidateRows(parsed.tracks).slice(0, count + 4);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 3. Validation — the critical stage. Nothing renders or saves unless it resolves here.
+
+export interface ResolvedTrack {
+  id: string;
+  uri: string;
+  name: string;
+  artists: string[];
+  image: string | null;
+  durationMs: number;
+}
+
+// Diacritics stripped, lowercased, bracketed content (feat./remaster/live year etc.) and trailing
+// "feat./ft./featuring" clauses removed, punctuation collapsed to spaces. A candidate is accepted only
+// on exact match after this normalisation — no fuzzy/edit-distance matching (a wrong-song "match" is
+// worse than a dropped one).
+const COMBINING_DIACRITICS = new RegExp('[\\u0300-\\u036f]', 'g');
+
+function normalise(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(COMBINING_DIACRITICS, '')
+    .toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\[.*?\]/g, ' ')
+    .replace(/\b(feat|featuring|ft)\.?\s+.*/, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function isMatch(candidate: Candidate, track: SpotifyTrack): boolean {
+  if (normalise(candidate.title) !== normalise(track.name)) return false;
+  const wantArtist = normalise(candidate.artist);
+  return track.artists.some((a) => {
+    const gotArtist = normalise(a.name);
+    return gotArtist === wantArtist || (wantArtist.length > 2 && gotArtist.includes(wantArtist)) || (gotArtist.length > 2 && wantArtist.includes(gotArtist));
+  });
+}
+
+function toResolvedTrack(track: SpotifyTrack): ResolvedTrack {
+  return {
+    id: track.id,
+    uri: `spotify:track:${track.id}`,
+    name: track.name,
+    artists: track.artists.map((a) => a.name),
+    image: track.album.images[0]?.url ?? null,
+    durationMs: track.duration_ms,
+  };
+}
+
+async function validateCandidates(accessToken: string, candidates: Candidate[]): Promise<{ resolved: ResolvedTrack[]; rejected: Candidate[] }> {
+  const resolved: ResolvedTrack[] = [];
+  const rejected: Candidate[] = [];
+  // Sequential, not concurrent — politely respects Spotify's dev-mode rolling rate limit (C10);
+  // spotifyRequest already retries 429s with backoff underneath searchTracks.
+  for (const candidate of candidates) {
+    let results: SpotifyTrack[] = [];
+    try {
+      results = await searchTracks(accessToken, candidate.artist, candidate.title);
+    } catch {
+      rejected.push(candidate);
+      continue;
+    }
+    const match = results.find((t) => isMatch(candidate, t));
+    if (match) resolved.push(toResolvedTrack(match));
+    else rejected.push(candidate);
+  }
+  return { resolved, rejected };
+}
+
+function dedupeById(tracks: ResolvedTrack[]): ResolvedTrack[] {
+  const seen = new Map<string, ResolvedTrack>();
+  for (const t of tracks) if (!seen.has(t.id)) seen.set(t.id, t);
+  return [...seen.values()];
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 4. Orchestration.
+
+export type PlaylistResult =
+  | { ok: true; name: string; description: string; tracks: ResolvedTrack[]; recencyCaveat: boolean }
+  | { ok: false; message: string };
+
+export async function generatePlaylist(params: {
+  llm: LlmProvider;
+  service: SupabaseClient;
+  profileId: string;
+  accessToken: string;
+  brief: string;
+  dial: FamiliarityDial;
+}): Promise<PlaylistResult> {
+  const { llm, service, profileId, accessToken, brief, dial } = params;
+
+  const profile = await buildListeningProfile(service, profileId);
+  const draft = await draftCandidates(llm, profile, brief, dial);
+
+  let { resolved, rejected } = await validateCandidates(accessToken, draft.candidates);
+  resolved = dedupeById(resolved);
+
+  if (resolved.length < RENDER_MAX && (resolved.length > 0 || draft.candidates.length > 0)) {
+    const needed = RENDER_MAX - resolved.length;
+    const avoidNames = [
+      ...resolved.map((r) => `${r.artists[0] ?? ''} - ${r.name}`),
+      ...rejected.map((c) => `${c.artist} - ${c.title}`),
+    ];
+    const replacements = await draftReplacements(llm, profile, brief, dial, avoidNames, needed);
+    if (replacements.length > 0) {
+      const backfill = await validateCandidates(accessToken, replacements);
+      resolved = dedupeById([...resolved, ...backfill.resolved]);
+    }
+  }
+
+  const tracks = resolved.slice(0, RENDER_MAX);
+  if (tracks.length < RENDER_MIN) {
+    return {
+      ok: false,
+      message: "I couldn't find enough real matches for that brief — try naming an artist, genre, or mood a bit more specifically.",
+    };
+  }
+
+  return {
+    ok: true,
+    name: draft.name,
+    description: draft.description,
+    tracks,
+    recencyCaveat: RECENCY_PATTERN.test(brief),
+  };
+}

@@ -4,10 +4,12 @@ const AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const API_BASE = 'https://api.spotify.com/v1';
 
-// Read-only scopes, and only the ones we actually use: user-read-recently-played (the sync cron's
-// play log) and playlist-read-private (the user's own playlists). Never request write/modify scopes —
-// "we only read what you play, never post" is a product commitment, not just a default.
-export const SPOTIFY_SCOPES = ['user-read-recently-played', 'playlist-read-private'];
+// Read scopes: user-read-recently-played (the sync cron's play log) and playlist-read-private (the
+// user's own playlists). Plus exactly one write scope, playlist-modify-private, used only to create a
+// private playlist when the user taps "Save to Spotify" on a generated playlist (src/lib/playlist.ts)
+// — never to modify an existing playlist, follow/unfollow, or post publicly. Do not add
+// playlist-modify-public; that's a different privacy posture and out of scope (see CLAUDE.md).
+export const SPOTIFY_SCOPES = ['user-read-recently-played', 'playlist-read-private', 'playlist-modify-private'];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,6 +130,14 @@ function authGet(path: string, accessToken: string): Promise<Response> {
   return spotifyRequest(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
 }
 
+function authPost(path: string, accessToken: string, body: unknown): Promise<Response> {
+  return spotifyRequest(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getSpotifyProfile(accessToken: string): Promise<SpotifyProfile> {
   const response = await authGet('/me', accessToken);
   if (!response.ok) {
@@ -203,4 +213,66 @@ export async function getTrack(accessToken: string, trackId: string): Promise<Sp
     throw new Error(`Spotify track request failed: ${response.status} ${await response.text()}`);
   }
   return response.json();
+}
+
+// Search (C5: capped at 10 results/request) — used by the Playlist pipeline (src/lib/playlist.ts) to
+// resolve model-suggested (artist, title) pairs to real tracks. Field filters (track:/artist:) narrow
+// the search server-side; the caller still verifies the match itself before trusting a result.
+export async function searchTracks(
+  accessToken: string,
+  artist: string,
+  title: string,
+  limit = 5,
+): Promise<SpotifyTrack[]> {
+  const q = `track:${JSON.stringify(title)} artist:${JSON.stringify(artist)}`;
+  const query = new URLSearchParams({ q, type: 'track', limit: String(limit) });
+  const response = await authGet(`/search?${query}`, accessToken);
+  if (!response.ok) {
+    throw new Error(`Spotify search request failed: ${response.status} ${await response.text()}`);
+  }
+  const body = (await response.json()) as { tracks?: { items?: SpotifyTrack[] } };
+  return body.tracks?.items ?? [];
+}
+
+// Thrown when Spotify rejects a playlist write with 403 — almost always a stored token minted before
+// playlist-modify-private was added to SPOTIFY_SCOPES. Callers should prompt a reconnect, not retry.
+export class SpotifyScopeError extends Error {
+  constructor() {
+    super('Spotify rejected the write — the stored token is missing a required scope');
+    this.name = 'SpotifyScopeError';
+  }
+}
+
+export interface SpotifyPlaylist {
+  id: string;
+  external_urls: { spotify: string };
+}
+
+// Playlist write endpoints, post-Feb-2026 names (C9): playlist creation moved from
+// POST /users/{user_id}/playlists to POST /me/playlists (owner inferred from the token, no user id
+// needed), and item mutation moved from .../tracks to .../items. Build against these, not the old
+// names — see the Spotify API constraints register in CLAUDE.md.
+export async function createPlaylist(
+  accessToken: string,
+  name: string,
+  description: string,
+): Promise<SpotifyPlaylist> {
+  const response = await authPost('/me/playlists', accessToken, { name, description, public: false });
+  if (response.status === 403) throw new SpotifyScopeError();
+  if (!response.ok) {
+    throw new Error(`Spotify create-playlist request failed: ${response.status} ${await response.text()}`);
+  }
+  return response.json();
+}
+
+export async function addTracksToPlaylistItems(
+  accessToken: string,
+  playlistId: string,
+  trackUris: string[],
+): Promise<void> {
+  const response = await authPost(`/playlists/${playlistId}/items`, accessToken, { uris: trackUris });
+  if (response.status === 403) throw new SpotifyScopeError();
+  if (!response.ok) {
+    throw new Error(`Spotify add-items request failed: ${response.status} ${await response.text()}`);
+  }
 }

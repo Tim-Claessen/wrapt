@@ -11,6 +11,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { DISPLAY_TIME_ZONE } from './format';
 import type { LlmMessage, LlmProvider, LlmToolSchema } from './llm';
+import { bumpUsage, getUsageRemaining, type UsageState } from './usage';
 
 export const ASK_KIND = 'ask';
 export const ASK_DAILY_LIMIT = 50;
@@ -261,48 +262,15 @@ export async function runAskAgent(params: {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Usage cap.
+// Usage cap — thin wrappers over the shared ai_usage helpers in ./usage (see also src/lib/playlist.ts,
+// which caps the Playlist tab the same way with kind='playlist').
 
-export interface UsageState {
-  allowed: boolean;
-  used: number;
-  remaining: number;
+export type { UsageState };
+
+export function bumpAskUsage(service: SupabaseClient, profileId: string): Promise<UsageState> {
+  return bumpUsage(service, profileId, ASK_KIND, ASK_DAILY_LIMIT);
 }
 
-// Atomically count this request against today's cap. Call once per accepted question, before the
-// agent runs; a blocked request is not charged (see bump_ai_usage).
-export async function bumpAskUsage(service: SupabaseClient, profileId: string): Promise<UsageState> {
-  const { data, error } = await service.rpc('bump_ai_usage', {
-    p_profile_id: profileId,
-    p_kind: ASK_KIND,
-    p_limit: ASK_DAILY_LIMIT,
-  });
-  if (error) throw error;
-  const row = (data?.[0] ?? {}) as { allowed?: boolean; used?: number; remaining?: number };
-  return {
-    allowed: Boolean(row.allowed),
-    used: Number(row.used ?? 0),
-    remaining: Number(row.remaining ?? 0),
-  };
-}
-
-// Read-only remaining count for today (no increment) — for the quiet counter on /settings and the
-// /ask composer hint. Fails open (assumes a full allowance) rather than throwing, so a not-yet-pasted
-// `ai_usage` table can't 500 the pages that display it — this is a display concern, not enforcement.
-export async function getAskRemaining(service: SupabaseClient, profileId: string): Promise<{ used: number; remaining: number; limit: number }> {
-  const day = new Date().toLocaleDateString('en-CA', { timeZone: DISPLAY_TIME_ZONE }); // YYYY-MM-DD, AWST
-  try {
-    const { data, error } = await service
-      .from('ai_usage')
-      .select('count')
-      .eq('profile_id', profileId)
-      .eq('day', day)
-      .eq('kind', ASK_KIND)
-      .maybeSingle();
-    if (error) throw error;
-    const used = Number((data as { count?: number } | null)?.count ?? 0);
-    return { used, remaining: Math.max(ASK_DAILY_LIMIT - used, 0), limit: ASK_DAILY_LIMIT };
-  } catch {
-    return { used: 0, remaining: ASK_DAILY_LIMIT, limit: ASK_DAILY_LIMIT };
-  }
+export function getAskRemaining(service: SupabaseClient, profileId: string): Promise<{ used: number; remaining: number; limit: number }> {
+  return getUsageRemaining(service, profileId, ASK_KIND, ASK_DAILY_LIMIT);
 }
