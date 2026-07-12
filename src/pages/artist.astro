@@ -57,6 +57,8 @@ function absolute(date: Date): string {
     year: 'numeric',
   });
 }
+
+const rawMinutes = summary ? Math.round(summary.totalMs / 60000) : 0;
 ---
 
 <AppShell title="Artist" wide nav>
@@ -90,8 +92,12 @@ function absolute(date: Date): string {
         <section class="chips">
           <p class="chips__label mono">Or jump to one you've played</p>
           <div class="chips__list">
-            {randomArtists.map((a) => (
-              <a href={`/artist?name=${encodeURIComponent(a.artistName)}`} class="chip">
+            {randomArtists.map((a, i) => (
+              <a
+                href={`/artist?name=${encodeURIComponent(a.artistName)}`}
+                class="chip riseIn"
+                style={`animation-delay:${i * 45}ms`}
+              >
                 <div class="chip__art">
                   {a.image ? <img src={a.image} alt="" loading="lazy" /> : <div class="chip__art-fallback" />}
                 </div>
@@ -128,8 +134,12 @@ function absolute(date: Date): string {
         <section class="matches">
           <p class="matches__label mono">{matches.length} artists match "{qParam}"</p>
           <div class="matches__list">
-            {matches.map((m) => (
-              <a href={`/artist?name=${encodeURIComponent(m.artistName)}`} class="match">
+            {matches.map((m, i) => (
+              <a
+                href={`/artist?name=${encodeURIComponent(m.artistName)}`}
+                class="match riseIn"
+                style={`animation-delay:${i * 45}ms`}
+              >
                 <div class="match__art">
                   {m.image ? <img src={m.image} alt="" loading="lazy" /> : <div class="match__art-fallback" />}
                 </div>
@@ -148,40 +158,58 @@ function absolute(date: Date): string {
     {
       summary && (
         <Fragment>
-          <section class="profile">
-            <div class="profile__art">
-              {summary.image ? <img src={summary.image} alt="" /> : <div class="profile__art-fallback" />}
-            </div>
-            <div class="profile__meta">
-              <span class="eyebrow mono">Artist</span>
-              <h2 class="profile__name">{summary.artistName}</h2>
-            </div>
-          </section>
+          {/* Hero — same DNA as the dashboard's MinutesHero (blurred art backdrop, scrim, big
+              tabular-nums headline, mini-stat row), built around this one artist's own photo
+              instead of a mosaic — the single-subject counterpart to the dashboard's collection. */}
+          <section class="hero">
+            <div
+              class="hero__backdrop"
+              aria-hidden="true"
+              style={summary.image ? `background-image:url('${summary.image}')` : 'background:linear-gradient(145deg,#4a4538,#1a1812)'}
+            />
+            <div class="hero__scrim" aria-hidden="true" />
+            <div class="hero__body">
+              <div class="hero__id">
+                <div class="hero__art">
+                  {summary.image ? <img src={summary.image} alt="" /> : <div class="hero__art-fallback" />}
+                </div>
+                <div class="hero__idmeta">
+                  <span class="eyebrow mono">Artist</span>
+                  <h2 class="hero__name">{summary.artistName}</h2>
+                </div>
+              </div>
 
-          <section class="stats">
-            <div class="stat">
-              <span class="stat__v mono">{formatCompactNumber(summary.totalPlays)}</span>
-              <span class="stat__l mono">Total plays</span>
-            </div>
-            <div class="stat">
-              <span class="stat__v mono">{formatMinutes(summary.totalMs)}</span>
-              <span class="stat__l mono">Time listened</span>
-            </div>
-            <div class="stat">
-              <span class="stat__v mono">{summary.firstPlayedAt ? absolute(summary.firstPlayedAt) : '—'}</span>
-              <span class="stat__l mono">First listened</span>
-            </div>
-            <div class="stat">
-              <span class="stat__v mono">{summary.bestYear ?? '—'}</span>
-              <span class="stat__l mono">Biggest year{summary.bestYear ? ` · ${formatMinutes(summary.bestYearMs)}` : ''}</span>
+              <div class="hero__figure">
+                <div class="hero__minutes mono">{rawMinutes.toLocaleString()}</div>
+                <div class="hero__unit">
+                  minutes listened
+                  <br />
+                  <b>{formatCompactNumber(summary.totalPlays)} plays</b> all-time
+                </div>
+              </div>
+
+              <div class="hero__stats">
+                <div class="ministat">
+                  <span class="ministat__v mono">{summary.firstPlayedAt ? absolute(summary.firstPlayedAt) : '—'}</span>
+                  <span class="ministat__l mono">First listened</span>
+                </div>
+                <div class="ministat">
+                  <span class="ministat__v mono">{summary.bestYear ?? '—'}</span>
+                  <span class="ministat__l mono">Biggest year{summary.bestYear ? ` · ${formatMinutes(summary.bestYearMs)}` : ''}</span>
+                </div>
+              </div>
             </div>
           </section>
 
           {
             summary.firstTrackName && (
-              <p class="first-song mono">
-                First song you heard: <b>{summary.firstTrackName}</b>
-              </p>
+              <div class="first-song">
+                <span class="first-song__icon" aria-hidden="true">♪</span>
+                <div class="first-song__text">
+                  <span class="first-song__label mono">First song you heard</span>
+                  <span class="first-song__track">{summary.firstTrackName}</span>
+                </div>
+              </div>
             )
           }
 
@@ -190,8 +218,10 @@ function absolute(date: Date): string {
             <div class="top-tracks__rows">
               {
                 topTracks.length > 0 ? (
-                  topTracks.map((entry) => (
-                    <LeaderboardRow entry={entry} showMovement={false} shape="square" href={null} />
+                  topTracks.map((entry, i) => (
+                    <div class="riseIn" style={`animation-delay:${i * 45}ms`}>
+                      <LeaderboardRow entry={entry} showMovement={false} shape="square" href={null} />
+                    </div>
                   ))
                 ) : (
                   <p class="empty-note">No tracks logged for this artist yet.</p>
@@ -449,7 +479,9 @@ function absolute(date: Date): string {
     cursor: pointer;
   }
 
-  /* ---- browse chips ---- */
+  /* ---- browse chips ----
+     Same bordered surface-raised card language as the stat tiles elsewhere in the app (History's
+     hero stats, the old per-artist stat grid) — not a standalone pill style. */
   .chips {
     margin-top: 24px;
   }
@@ -461,33 +493,35 @@ function absolute(date: Date): string {
   }
 
   .chips__list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 10px;
   }
 
   .chip {
-    display: inline-flex;
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 7px;
-    padding: 6px 12px 6px 6px;
-    border-radius: 999px;
+    gap: 8px;
+    padding: 14px 8px;
     background: var(--surface-raised);
     border: 1px solid var(--hairline);
+    border-radius: 14px;
     text-decoration: none;
     color: var(--text-1);
-    font-size: 13px;
-    transition: border-color 0.12s ease;
+    text-align: center;
+    transition: border-color 0.15s ease, transform 0.15s ease;
   }
 
   .chip:hover {
     border-color: var(--gold);
+    transform: translateY(-2px);
   }
 
   .chip__art {
     flex: 0 0 auto;
-    width: 24px;
-    height: 24px;
+    width: 52px;
+    height: 52px;
     border-radius: 50%;
     overflow: hidden;
     background: linear-gradient(140deg, #4a4538, #1a1812);
@@ -506,10 +540,11 @@ function absolute(date: Date): string {
   }
 
   .chip__name {
+    width: 100%;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 160px;
   }
 
   /* ---- match list ---- */
@@ -591,42 +626,77 @@ function absolute(date: Date): string {
     font-size: 18px;
   }
 
-  /* ---- profile header ---- */
-  .profile {
+  /* ---- hero ----
+     Mirrors MinutesHero on the dashboard (blurred backdrop, scrim, big tabular-nums headline,
+     mini-stat row) built around this one artist's own photo instead of a mosaic of many. */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    border: 1px solid var(--hairline);
     margin-top: 30px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
   }
 
-  .profile__art {
+  .hero__backdrop {
+    position: absolute;
+    inset: -20%;
+    background-size: cover;
+    background-position: center;
+    filter: blur(36px) saturate(0.85) brightness(0.75);
+    opacity: 0.6;
+    z-index: 0;
+  }
+
+  .hero__scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background:
+      linear-gradient(180deg, rgba(8, 8, 10, 0.55), rgba(8, 8, 10, 0.85) 60%, rgba(8, 8, 10, 0.97)),
+      radial-gradient(90% 120% at 12% 0%, rgba(208, 162, 78, 0.16), transparent 60%);
+  }
+
+  .hero__body {
+    position: relative;
+    z-index: 2;
+    padding: 22px 22px 26px;
+  }
+
+  .hero__id {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .hero__art {
     flex: 0 0 auto;
-    width: 84px;
-    height: 84px;
+    width: 64px;
+    height: 64px;
     border-radius: 50%;
     overflow: hidden;
     background: linear-gradient(140deg, #4a4538, #1a1812);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   }
 
-  .profile__art img {
+  .hero__art img {
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
   }
 
-  .profile__art-fallback {
+  .hero__art-fallback {
     width: 100%;
     height: 100%;
   }
 
-  .profile__meta {
+  .hero__idmeta {
     min-width: 0;
   }
 
-  .profile__name {
-    margin: 4px 0 0;
-    font-size: clamp(20px, 5.5vw, 28px);
+  .hero__name {
+    margin: 3px 0 0;
+    font-size: clamp(19px, 5vw, 25px);
     font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--text-1);
@@ -635,47 +705,108 @@ function absolute(date: Date): string {
     white-space: nowrap;
   }
 
-  /* ---- stats ---- */
-  .stats {
-    margin-top: 24px;
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+  .hero__figure {
+    display: flex;
+    align-items: flex-end;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 18px;
   }
 
-  .stat {
+  .hero__minutes {
+    font-size: clamp(44px, 13vw, 84px);
+    font-weight: 700;
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hero__unit {
+    font-size: 13px;
+    color: var(--text-2);
+    padding-bottom: 6px;
+    line-height: 1.4;
+  }
+
+  .hero__unit b {
+    color: var(--gold);
+    font-weight: 700;
+  }
+
+  .hero__stats {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+
+  .ministat {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    background: var(--surface-raised);
-    border: 1px solid var(--hairline);
-    border-radius: 14px;
-    padding: 14px 16px;
+    gap: 3px;
   }
 
-  .stat__v {
-    font-size: 20px;
+  .ministat__v {
+    font-size: 18px;
     font-weight: 700;
     color: var(--text-1);
     font-variant-numeric: tabular-nums;
   }
 
-  .stat__l {
+  .ministat__l {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  /* ---- first song ---- */
+  .first-song {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 12px 16px;
+  }
+
+  .first-song__icon {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(208, 162, 78, 0.14);
+    color: var(--gold);
+    font-size: 14px;
+  }
+
+  .first-song__text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .first-song__label {
     font-size: 10px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-3);
   }
 
-  .first-song {
-    margin-top: 16px;
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-
-  .first-song b {
+  .first-song__track {
+    font-size: 13.5px;
+    font-weight: 600;
     color: var(--text-1);
-    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ---- top tracks ---- */
@@ -702,9 +833,19 @@ function absolute(date: Date): string {
     line-height: 1.5;
   }
 
-  @media (min-width: 560px) {
-    .stats {
-      grid-template-columns: repeat(4, 1fr);
+  /* ---- countdown-style reveal, used by the browse chips, search matches, and top tracks ---- */
+  .riseIn {
+    animation: riseIn 0.3s ease both;
+  }
+
+  @keyframes riseIn {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 </style>
