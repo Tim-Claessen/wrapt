@@ -104,8 +104,37 @@ function buildDraftSystemPrompt(profile: string, dial: FamiliarityDial): string 
   ].join('\n');
 }
 
+// A ~28-track JSON payload needs real headroom — the provider's own default (see DEFAULT_MAX_TOKENS
+// in src/lib/llm.ts) is sized for short answers/SQL, not this. Generous on purpose: a truncated
+// completion is invalid JSON and silently yields zero candidates (see parseJsonObject below).
+const DRAFT_MAX_TOKENS = 2048;
+
 function stripFences(raw: string): string {
   return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
+// Defensive JSON parse: strict parse first, then fall back to the first balanced-looking {...}
+// substring in case the model wrapped the object in prose despite instructions not to. Logs on total
+// failure (including a truncated/cut-off completion, which is otherwise indistinguishable from the
+// model simply returning nothing) so a systemic issue is visible in server logs instead of just
+// surfacing as "couldn't find any real matches" to the user.
+function parseJsonObject(raw: string, context: string): Record<string, unknown> {
+  const text = stripFences(raw);
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+      } catch {
+        // fall through to logging below
+      }
+    }
+    console.error(`playlist ${context}: model response wasn't valid JSON (length ${text.length}):`, text.slice(0, 500));
+    return {};
+  }
 }
 
 function parseCandidateRows(raw: unknown): Candidate[] {
@@ -124,13 +153,13 @@ function parseCandidateRows(raw: unknown): Candidate[] {
 
 async function draftCandidates(llm: LlmProvider, profile: string, brief: string, dial: FamiliarityDial): Promise<DraftResult> {
   const system = buildDraftSystemPrompt(profile, dial);
-  const resp = await llm.chat({ system, messages: [{ role: 'user', content: brief }], tools: [] });
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(stripFences(resp.text ?? '')) as Record<string, unknown>;
-  } catch {
-    parsed = {};
-  }
+  const resp = await llm.chat({
+    system,
+    messages: [{ role: 'user', content: brief }],
+    tools: [],
+    maxTokens: DRAFT_MAX_TOKENS,
+  });
+  const parsed = parseJsonObject(resp.text ?? '', 'draft');
   const name = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim().slice(0, 60) : 'Your mix';
   const description = typeof parsed.description === 'string' ? parsed.description.trim().slice(0, 160) : '';
   return { name, description, candidates: parseCandidateRows(parsed.tracks).slice(0, DRAFT_TARGET + 4) };
@@ -161,13 +190,9 @@ async function draftReplacements(
       { role: 'user', content: message },
     ],
     tools: [],
+    maxTokens: DRAFT_MAX_TOKENS,
   });
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(stripFences(resp.text ?? '')) as Record<string, unknown>;
-  } catch {
-    parsed = {};
-  }
+  const parsed = parseJsonObject(resp.text ?? '', 'backfill');
   return parseCandidateRows(parsed.tracks).slice(0, count + 4);
 }
 
@@ -231,7 +256,10 @@ async function validateCandidates(accessToken: string, candidates: Candidate[]):
     let results: SpotifyTrack[] = [];
     try {
       results = await searchTracks(accessToken, candidate.artist, candidate.title);
-    } catch {
+    } catch (err) {
+      // Logged, not swallowed — a systemic failure here (rate limit, expired token) would otherwise
+      // look identical to "the model's suggestions weren't real" by the time it reaches the user.
+      console.error(`playlist search failed for "${candidate.artist} - ${candidate.title}":`, err);
       rejected.push(candidate);
       continue;
     }

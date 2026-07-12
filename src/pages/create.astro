@@ -133,7 +133,9 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
     playlistBusy = state;
     playlistInput.disabled = state;
     playlistSend.disabled = state || playlistRemaining <= 0;
-    playlistSend.textContent = state ? '…' : 'Generate';
+    playlistSend.textContent = state ? 'Generating…' : 'Generate';
+    for (const btn of dialButtons) btn.disabled = state;
+    root.classList.toggle('is-busy', state);
     playlistStatus.hidden = !state;
     if (state) playlistResult.innerHTML = '';
   }
@@ -369,6 +371,11 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
     font-weight: 700;
   }
 
+  .create-page .dial__pill:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
   .create-page .composer {
     display: flex;
     gap: 8px;
@@ -421,8 +428,20 @@ const hasPlaylistScope = (profile.scopes ?? []).includes('playlist-modify-privat
 
   .create-page .playlist-status {
     margin: 18px 0 0;
-    font-size: 12px;
-    color: var(--text-3);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-2);
+    animation: statusPulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes statusPulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
   }
 
   .create-page .playlist-result {

@@ -40,10 +40,19 @@ export interface LlmResponse {
   toolCalls: LlmToolCall[];
 }
 
+// Cloudflare's implicit default completion length for this model is short (observed: truncates well
+// under 300 tokens with no max_tokens set) — nowhere near enough for a multi-item JSON payload like
+// the Playlist draft's ~28 tracks. A truncated response is invalid JSON, which callers then parse as
+// an empty result with no visible error (see src/lib/playlist.ts). Always set an explicit max_tokens
+// so a long, valid completion isn't silently cut short; callers needing more than the default can
+// override per-call.
+const DEFAULT_MAX_TOKENS = 1024;
+
 export interface LlmChatInput {
   system: string;
   messages: LlmMessage[];
   tools: LlmToolSchema[];
+  maxTokens?: number;
 }
 
 export interface LlmProvider {
@@ -86,9 +95,10 @@ function normaliseToolCalls(raw: unknown): LlmToolCall[] {
 export function createWorkersAiProvider(ai: AiBinding, model: string = WORKERS_AI_MODEL): LlmProvider {
   return {
     model,
-    async chat({ system, messages, tools }: LlmChatInput): Promise<LlmResponse> {
+    async chat({ system, messages, tools, maxTokens }: LlmChatInput): Promise<LlmResponse> {
       const payload: Record<string, unknown> = {
         messages: [{ role: 'system', content: system }, ...messages],
+        max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
       };
       // OpenAI-style tool schema — the live binding rejects the flat { name, parameters } form with
       // "8001: Invalid input". Omit `tools` entirely when there are none (the loop drops them to
