@@ -11,19 +11,18 @@
 // Reads DB creds, TOKEN_ENC_KEY and SPOTIFY_CLIENT_ID from .dev.vars in the repo root. Idempotent
 // and resumable — safe to stop (Ctrl-C) and re-run; it picks up wherever it left off.
 // If 10 minutes pass without resolving a single track (e.g. stuck in a 429 backoff loop), it gives
-// up and exits with code 3 — a distinct code so the .bat wrapper can auto-close instead of waiting
-// on a keypress, since this is meant to be safe to leave running unattended.
+// up and exits with code 3 rather than spinning forever — re-run to pick up where it left off.
 
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const API_BASE = 'https://api.spotify.com/v1';
-const SELECT_PAGE = 1000; // pending ids fetched per outer pass
+const SELECT_PAGE = 1000; // pending ids fetched per profile, per outer pass
 const PACING_MS = 200; // gap between track lookups — keeps under the dev-mode rate window
 const RATE_LIMIT_MAX_WAIT_S = 60;
 const STALL_TIMEOUT_MS = 10 * 60 * 1000; // give up if nothing resolves in this long (e.g. stuck in a 429 loop)
-const STALL_EXIT_CODE = 3; // distinct from 0 (done) / 1 (error) so the .bat can auto-close without a `pause`
+const STALL_EXIT_CODE = 3; // distinct from 0 (done) / 1 (error), for anyone scripting around this
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,7 +59,10 @@ async function importKey() {
   return crypto.subtle.importKey('raw', fromB64(vars.TOKEN_ENC_KEY), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 async function decryptToken(encrypted) {
-  const [iv, data] = encrypted.split('.');
+  // Mirrors src/lib/crypto.ts: versioned `v1.<iv>.<ciphertext>`, with legacy unprefixed
+  // `<iv>.<ciphertext>` values treated as v1 too (same scheme, same key).
+  const parts = encrypted.split('.');
+  const [iv, data] = parts[0] === 'v1' ? parts.slice(1) : parts;
   const key = await importKey();
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(iv) }, key, fromB64(data));
   return new TextDecoder().decode(plain);
@@ -69,7 +71,7 @@ async function encryptToken(plaintext) {
   const key = await importKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
-  return `${toB64(iv)}.${toB64(new Uint8Array(ct))}`;
+  return `v1.${toB64(iv)}.${toB64(new Uint8Array(ct))}`;
 }
 
 // ---- profile + token ----
@@ -149,6 +151,25 @@ async function getTrack(trackId) {
   }
 }
 
+// Pending track ids ranked by total play count across every profile (heaviest rotation first),
+// via the same import_pending_for_profile RPC the /import page's tick loop uses — just called once
+// per profile and merged, since the enrichment queue is global but the RPC is profile-scoped.
+async function fetchPendingBacklog(excludeIds) {
+  const counts = new Map();
+  for (const p of profiles) {
+    const { data, error } = await sb.rpc('import_pending_for_profile', { p_profile_id: p.id, p_limit: SELECT_PAGE });
+    if (error) {
+      console.error(`\nFailed to read backlog for profile ${p.id}: ${error.message}`);
+      process.exit(1);
+    }
+    for (const row of data ?? []) {
+      if (excludeIds.has(row.track_id)) continue;
+      counts.set(row.track_id, (counts.get(row.track_id) ?? 0) + Number(row.play_count));
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+
 // ---- drain loop ----
 const handled = new Set();
 let resolved = 0;
@@ -156,17 +177,7 @@ let failed = 0;
 let transient = 0;
 
 for (;;) {
-  const { data: pendingRows, error } = await sb
-    .from('import_track_enrichment')
-    .select('track_id')
-    .eq('status', 'pending')
-    .order('updated_at', { ascending: true })
-    .limit(SELECT_PAGE);
-  if (error) {
-    console.error(`\nFailed to read backlog: ${error.message}`);
-    process.exit(1);
-  }
-  const batch = (pendingRows ?? []).map((r) => r.track_id).filter((id) => !handled.has(id));
+  const batch = await fetchPendingBacklog(handled);
   if (batch.length === 0) break; // nothing left we haven't already attempted this run
 
   for (let i = 0; i < batch.length; i++) {
