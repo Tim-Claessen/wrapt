@@ -17,7 +17,3 @@ npm-debug.log*
 
 # wrangler
 .wrangler/
-
-# Spotify Extended Streaming History exports — personal listening data, loaded into
-# Supabase via the /import flow (or scripts/backfill-*.mjs), never served from the repo.
-spotify_history/
