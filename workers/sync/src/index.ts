@@ -71,6 +71,13 @@ async function runSync(env: SyncEnv): Promise<void> {
 
   console.log(`[sync] found ${profiles?.length ?? 0} profile(s)`);
   let lastAccessToken: string | null = null;
+  // Rate limits are expected/self-healing (C10) and stay a warn-only skip. Everything else here —
+  // an expired/revoked token, or a genuine unexpected error — means this profile silently stopped
+  // syncing. console.error/warn alone never surfaces in Cloudflare's own error-rate metrics (a
+  // caught error doesn't fail the invocation), so a real regression here could run for days without
+  // tripping any alert. Collecting failures and throwing once at the end turns that into a real
+  // Workers invocation error, which Cloudflare's alerting *can* see.
+  const failures: string[] = [];
   for (const profile of profiles ?? []) {
     try {
       const accessToken = await syncProfile(supabase, env, profile);
@@ -83,13 +90,20 @@ async function runSync(env: SyncEnv): Promise<void> {
         continue;
       }
       if (err instanceof SpotifyTokenExpiredError) {
-        // Not a bug — the user needs to reconnect via /connect. No "needs reconnect" flag is
-        // persisted (out of scope); this just keeps it out of the generic error log below so a
-        // dead refresh token doesn't read as a real failure on every single cron cycle.
         console.warn(`[sync] profile ${profile.id} needs reconnect (refresh token invalid/revoked)`);
+        failures.push(`${profile.id}: needs reconnect (refresh token invalid/revoked)`);
         continue;
       }
       console.error(`[sync] profile ${profile.id} failed:`, err);
+      failures.push(`${profile.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Thrown (not just logged) so a cycle where every profile failed shows up as a real Workers
+  // invocation error, not just quiet log lines — see the failures comment above the profile loop.
+  function throwIfFailures(): void {
+    if (failures.length > 0) {
+      throw new Error(`[sync] ${failures.length} profile(s) failed this cycle:\n${failures.join('\n')}`);
     }
   }
 
@@ -97,6 +111,7 @@ async function runSync(env: SyncEnv): Promise<void> {
   // resolving anyone's import-enrichment backlog, same reasoning as the shared artists_cache.
   if (!lastAccessToken) {
     console.log('[sync] import enrichment: no usable access token this cycle, skipping');
+    throwIfFailures();
     return;
   }
   let totalResolved = 0;
@@ -131,6 +146,7 @@ async function runSync(env: SyncEnv): Promise<void> {
     if (result.processed === 0) break; // backlog drained
   }
   console.log(`[sync] import enrichment: resolved ${totalResolved}, failed ${totalFailed}`);
+  throwIfFailures();
 }
 
 export default {
