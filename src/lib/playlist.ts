@@ -34,8 +34,12 @@ export function resetPlaylistUsage(service: SupabaseClient, profileId: string): 
 
 // ---------------------------------------------------------------------------------------------------
 // 1. Profile assembly — top ~30 artists/tracks over 6 months (reusing the leaderboard RPCs verbatim,
-// no new query) plus whatever genre coverage artists_cache already has. Kept compact (~30/30/12 short
-// lines, comfortably under the ~1,500 token budget) rather than token-counted precisely.
+// no new query). Kept compact (~30/30 short lines, comfortably under the ~1,500 token budget) rather
+// than token-counted precisely.
+//
+// There's no "Top genres" line any more: Spotify removed genres from the artist object (C11), so
+// artists_cache.genres is always empty and that line only ever emitted a placeholder. The model infers
+// style from the artist and track names instead, which is what it was really doing regardless.
 
 async function buildListeningProfile(service: SupabaseClient, profileId: string): Promise<string> {
   const [artists, tracks] = await Promise.all([
@@ -43,24 +47,11 @@ async function buildListeningProfile(service: SupabaseClient, profileId: string)
     getLeaderboard({ supabase: service, profileId, kind: 'tracks', window: '6m', limit: 30 }),
   ]);
 
-  const artistIds = [...new Set(artists.entries.map((e) => e.id).filter((id): id is string => Boolean(id)))];
-  let genreLines: string[] = [];
-  if (artistIds.length > 0) {
-    const { data } = await service.from('artists_cache').select('genres').in('id', artistIds);
-    const counts = new Map<string, number>();
-    for (const row of (data ?? []) as { genres: string[] }[]) {
-      for (const genre of row.genres ?? []) counts.set(genre, (counts.get(genre) ?? 0) + 1);
-    }
-    genreLines = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([g]) => g);
-  }
-
   const artistLines = artists.entries.map((e) => e.title).join(', ') || '(no listening history yet)';
   const trackLines = tracks.entries.map((e) => `${e.title} — ${e.subtitle ?? 'unknown artist'}`).join('\n') || '(no listening history yet)';
-  const genreText = genreLines.length > 0 ? genreLines.join(', ') : '(not enough artist metadata yet)';
 
   return [
     `Top artists (last 6 months): ${artistLines}`,
-    `Top genres: ${genreText}`,
     'Top tracks (last 6 months):',
     trackLines,
   ].join('\n');

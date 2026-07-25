@@ -154,10 +154,13 @@ export interface SpotifyTrack {
   album: { images: { url: string }[] };
 }
 
+// `genres` is optional because Spotify no longer returns it (C11) — the artist object is now just
+// id/name/images/urls. Kept on the type so a future re-introduction (or a `v2` field) doesn't need a
+// signature change, but never rely on it being present.
 export interface SpotifyArtist {
   id: string;
   name: string;
-  genres: string[];
+  genres?: string[];
   images: { url: string }[];
 }
 
@@ -186,7 +189,8 @@ export async function getRecentlyPlayed(
   return response.json();
 }
 
-// No batch artist endpoint (C6) — every genre lookup is one request, cached in artists_cache.
+// No batch artist endpoint (C6) — every artist lookup is one request, cached in artists_cache.
+// Returns name/images/urls only; no genres, followers or popularity any more (C11).
 export async function getArtist(accessToken: string, artistId: string): Promise<SpotifyArtist> {
   const response = await authGet(`/artists/${artistId}`, accessToken);
   if (!response.ok) {

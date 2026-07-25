@@ -160,7 +160,7 @@ const enrichPct = importProgress.total > 0 ? Math.round((importProgress.done / i
             </div>
             <p class="card__note mono">
               {importProgress.pending > 0
-                ? `${importProgress.pending.toLocaleString()} tracks still need genres & album art. Open Import and leave the tab open to speed it up.`
+                ? `${importProgress.pending.toLocaleString()} tracks still need album art. Open Import and leave the tab open to speed it up.`
                 : 'All imported tracks have their album art & details.'}
             </p>
             <a class="link mono" href="/import">Go to Import →</a>

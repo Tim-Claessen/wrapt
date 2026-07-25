@@ -3,6 +3,10 @@ import { getArtist, getRecentlyPlayed, type SpotifyRecentlyPlayedItem } from './
 
 const ARTIST_CACHE_STALE_DAYS = 30;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface PlayRow {
   profile_id: string;
   played_at: string;
@@ -62,7 +66,11 @@ export async function syncRecentlyPlayed(
 
 // Fills in artists_cache for any of the given artist ids that are missing or stale. Sequential,
 // one request per artist (C6 — no batch endpoint); each call already carries its own 429 backoff.
-export async function syncArtistGenres(
+//
+// This used to be about genres; Spotify has since removed genres from the artist object (C11), so the
+// only thing worth caching now is the artist name and image — which is what the leaderboard's artist
+// artwork reads. Renamed from syncArtistGenres to say what it actually does.
+export async function syncArtistMetadata(
   supabase: SupabaseClient,
   accessToken: string,
   artistIds: string[],
@@ -86,10 +94,85 @@ export async function syncArtistGenres(
     const { error: upsertError } = await supabase.from('artists_cache').upsert({
       id: artist.id,
       name: artist.name,
-      genres: artist.genres,
+      genres: artist.genres ?? [], // always [] in practice — Spotify stopped returning genres (C11)
       image: artist.images[0]?.url ?? null,
       fetched_at: new Date().toISOString(),
     });
     if (upsertError) throw upsertError;
   }
+}
+
+export interface ArtistImageBackfillResult {
+  missing: number; // top-ranked artists still without a cached image, before this run
+  cached: number; // how many we resolved this run
+}
+
+// Backfills artists_cache for the artists the dashboard actually shows.
+//
+// Why this exists: syncArtistMetadata only ever sees artist ids from *live* recently-played rows, so
+// an artist known only from imported history never gets a cache row — and the leaderboard reads its
+// artwork solely from artists_cache (`left join` in leaderboard_top_artists), falling back to the
+// gradient tile. After a big history import that's nearly every artist on the board.
+//
+// Rather than scanning every artist id in `plays` (a full unnest of the play log — slow enough to hit
+// the statement timeout), it reuses leaderboard_top_artists to take the most-played artists and fills
+// in whichever are missing an image. That prioritises exactly what's visible and converges over a few
+// cron cycles instead of trying to do everything at once.
+//
+// It sweeps several windows, not just all-time: the dashboard defaults to 30d, and an artist heavy in
+// recent rotation can sit well outside the all-time top few hundred. Windows are swept newest-first so
+// a bounded fetchLimit spends its budget on the board most likely to be on screen.
+const BACKFILL_SCAN_WINDOW_DAYS = [30, 183, null]; // null = all time; mirrors the dashboard's windows
+
+export async function backfillTopArtistImages(
+  supabase: SupabaseClient,
+  accessToken: string,
+  profileId: string,
+  options: { scanLimit: number; fetchLimit: number; pacingMs?: number },
+): Promise<ArtistImageBackfillResult> {
+  const { scanLimit, fetchLimit, pacingMs = 0 } = options;
+  const now = new Date();
+  const allTimeStart = '2000-01-01T00:00:00Z'; // matches ALL_TIME_START in src/lib/leaderboard.ts
+
+  const missingIds: string[] = [];
+  const seen = new Set<string>();
+  for (const days of BACKFILL_SCAN_WINDOW_DAYS) {
+    const since = days === null ? allTimeStart : new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase.rpc('leaderboard_top_artists', {
+      p_profile_id: profileId,
+      p_since: since,
+      p_until: now.toISOString(),
+      // Zero-width prior window — we only want the current ranking, never the rank-movement diff.
+      p_prev_since: allTimeStart,
+      p_prev_until: allTimeStart,
+      p_genre: null,
+      p_limit: scanLimit,
+    });
+    if (error) throw error;
+    for (const row of (data ?? []) as { artist_id: string | null; image: string | null }[]) {
+      if (!row.artist_id || row.image || seen.has(row.artist_id)) continue;
+      seen.add(row.artist_id);
+      missingIds.push(row.artist_id);
+    }
+  }
+  if (missingIds.length === 0) return { missing: 0, cached: 0 };
+
+  let cached = 0;
+  for (const artistId of missingIds.slice(0, fetchLimit)) {
+    if (pacingMs > 0 && cached > 0) await sleep(pacingMs);
+    // A rate limit here propagates to the caller (SpotifyRateLimitError from spotifyRequest) — the
+    // remaining ids stay missing and the next cycle picks them up, same as the enrichment drain.
+    const artist = await getArtist(accessToken, artistId);
+    const { error: upsertError } = await supabase.from('artists_cache').upsert({
+      id: artist.id,
+      name: artist.name,
+      genres: artist.genres ?? [], // always [] — Spotify no longer returns genres (C11)
+      image: artist.images[0]?.url ?? null,
+      fetched_at: new Date().toISOString(),
+    });
+    if (upsertError) throw upsertError;
+    cached++;
+  }
+
+  return { missing: missingIds.length, cached };
 }

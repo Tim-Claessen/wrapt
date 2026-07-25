@@ -292,7 +292,7 @@ const trendPoints = trend.map((point) => ({
 
 <script>
   // Swap the dashboard's content for the loading skeleton the instant an in-page filter
-  // navigation (range/kind/genre/custom-date links, all same pathname + new query string) starts —
+  // navigation (range/kind/artist/custom-date links, all same pathname + new query string) starts —
   // Astro's ClientRouter otherwise just keeps showing the old page until the new one is ready, with
   // no visible loading feedback. Cross-page navigations (login/connect/import) are left alone.
   document.addEventListener('astro:before-preparation', (event) => {

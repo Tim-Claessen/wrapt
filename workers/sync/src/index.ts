@@ -5,7 +5,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceClient } from '../../../src/lib/supabase';
 import { getValidSpotifyAccessToken } from '../../../src/lib/tokens';
-import { syncArtistGenres, syncRecentlyPlayed } from '../../../src/lib/plays';
+import { backfillTopArtistImages, syncArtistMetadata, syncRecentlyPlayed } from '../../../src/lib/plays';
 import { drainGlobalEnrichmentBacklog } from '../../../src/lib/import';
 import { SpotifyRateLimitError, SpotifyTokenExpiredError } from '../../../src/lib/spotify';
 
@@ -17,6 +17,15 @@ const ENRICHMENT_DRAIN_BATCH_SIZE = 100;
 const ENRICHMENT_MAX_ROUNDS = 4;
 const ENRICHMENT_PACING_MS = 150;
 const ENRICHMENT_RATE_LIMIT_SLEEP_CAP_S = 15;
+
+// Artist-artwork backfill. syncArtistMetadata only covers artists seen in *live* plays, so artists
+// known only from imported history have no artists_cache row and the leaderboard renders a gradient
+// placeholder for them. Each cycle we check the top ARTIST_IMAGE_SCAN_LIMIT artists and fill in a few
+// of whichever are missing — small enough to stay well clear of the dev-mode rate window (C10) even
+// stacked on top of the enrichment drain, and it converges over a handful of cycles.
+const ARTIST_IMAGE_SCAN_LIMIT = 250;
+const ARTIST_IMAGE_FETCH_PER_CYCLE = 25;
+const ARTIST_IMAGE_PACING_MS = 200;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,7 +58,7 @@ async function syncProfile(supabase: SupabaseClient, env: SyncEnv, profile: Sync
   );
   if (result.fetched === 0) return tokenInfo.accessToken;
 
-  await syncArtistGenres(supabase, tokenInfo.accessToken, result.artistIds);
+  await syncArtistMetadata(supabase, tokenInfo.accessToken, result.artistIds);
 
   if (result.newestPlayedAtMs && result.newestPlayedAtMs > (profile.plays_cursor_after_ms ?? 0)) {
     const { error } = await supabase
@@ -146,6 +155,33 @@ async function runSync(env: SyncEnv): Promise<void> {
     if (result.processed === 0) break; // backlog drained
   }
   console.log(`[sync] import enrichment: resolved ${totalResolved}, failed ${totalFailed}`);
+
+  // Artist artwork for the top of each profile's board (see the constants above). Runs after
+  // enrichment because enrichment is what populates plays.artist_ids in the first place — an imported
+  // artist has no id to look up until its tracks resolve. Rate limits end the step for this cycle
+  // rather than failing it: the missing artists are simply picked up next time.
+  for (const profile of profiles ?? []) {
+    try {
+      const result = await backfillTopArtistImages(supabase, lastAccessToken, profile.id, {
+        scanLimit: ARTIST_IMAGE_SCAN_LIMIT,
+        fetchLimit: ARTIST_IMAGE_FETCH_PER_CYCLE,
+        pacingMs: ARTIST_IMAGE_PACING_MS,
+      });
+      if (result.missing > 0) {
+        console.log(
+          `[sync] artist images: cached ${result.cached}, ${result.missing - result.cached} still missing in the top ${ARTIST_IMAGE_SCAN_LIMIT} for profile ${profile.id}`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof SpotifyRateLimitError) {
+        console.warn(`[sync] artist image backfill rate limited (retry after ${err.retryAfterSeconds}s), stopping for this cycle`);
+        break;
+      }
+      // Cosmetic backfill — never let it fail the cycle or mask a real sync failure.
+      console.error(`[sync] artist image backfill failed for profile ${profile.id}:`, err);
+    }
+  }
+
   throwIfFailures();
 }
 

@@ -45,15 +45,15 @@ const enrichPct = progress.total > 0 ? Math.round((progress.done / progress.tota
     <p id="enrich-progress-text" class="mono" style="font-size:12.5px;color:var(--text-2);">
       {
         progress.pending > 0
-          ? `Adding genres & art — ${progress.done} of ${progress.total} tracks (top tracks first)`
-          : `All set — genres & art added for ${progress.total} tracks.`
+          ? `Adding album art — ${progress.done} of ${progress.total} tracks (top tracks first)`
+          : `All set — album art added for ${progress.total} tracks.`
       }
     </p>
     <div style="margin-top:8px;height:6px;border-radius:4px;background:var(--surface-raised);overflow:hidden;">
       <div id="enrich-progress-bar" style={`height:100%;width:${enrichPct}%;background:var(--gold);transition:width .3s;`}></div>
     </div>
     <p class="mono" style="margin-top:8px;font-size:11.5px;color:var(--text-3);">
-      Your minutes, plays, and track rankings already include this history. Genres and album art keep
+      Your minutes, plays, and track rankings already include this history. Album art keeps
       filling in automatically — you can close this tab.
     </p>
   </div>
@@ -226,8 +226,8 @@ const enrichPct = progress.total > 0 ? Math.round((progress.done / progress.tota
       enrichProgressBar.style.width = `${pct}%`;
       enrichProgressText.textContent =
         enrichment.pending > 0
-          ? `Adding genres & art — ${enrichment.done} of ${enrichment.total} tracks (top tracks first)`
-          : `All set — genres & art added for ${enrichment.total} tracks.`;
+          ? `Adding album art — ${enrichment.done} of ${enrichment.total} tracks (top tracks first)`
+          : `All set — album art added for ${enrichment.total} tracks.`;
     }
 
     interface EnrichTickResponse {
