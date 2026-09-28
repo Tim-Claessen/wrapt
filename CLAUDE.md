@@ -60,6 +60,8 @@ Only two semantic colours beyond the accent (`--up`/`--down`), both low-chroma. 
 
 ### Supabase & migrations
 
+- **Shared project:** the Supabase project also hosts Yumlog (free tier caps an account at 2 projects), so expect non-Wrapt tables in the dashboard.
+
 - Client/session handling via `@supabase/ssr`: `createBrowserClient` in page `<script>` tags, `createServerClient` in `src/lib/supabase.ts` bound to Astro's `request`/`cookies`. Astro's `AstroCookies` has no `getAll()`, so the cookie adapter parses the raw `Cookie` header manually.
 - `createSupabaseServiceClient()` uses the **service-role key and must only be called from server code** (API routes, `.astro` frontmatter, the sync worker) — never shipped to the client.
 - **Migrations** live in `supabase/migrations/*.sql`. The Supabase CLI isn't linked on this machine (`db push` has never run here), so migrations are **hand-pasted into the Supabase Dashboard SQL editor**, in filename order, and mirrored into a file here for history. Write every migration to be **self-contained and idempotent** (it may be pasted, re-pasted, and re-run). To know the live schema, check the dashboard, not just this repo.
